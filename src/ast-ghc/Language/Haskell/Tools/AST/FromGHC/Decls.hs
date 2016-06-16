@@ -4,6 +4,7 @@
            #-}
 module Language.Haskell.Tools.AST.FromGHC.Decls where
 
+import GHC
 import RdrName as GHC
 import Class as GHC
 import HsSyn as GHC
@@ -17,6 +18,7 @@ import BasicTypes as GHC
 import Bag as GHC
 import ForeignCall as GHC
 import Outputable as GHC
+import Unique as GHC
 
 import Control.Monad.Reader
 import Control.Reference
@@ -117,7 +119,10 @@ trfDecl = addDefInfo $ trfLoc $ \case
   d -> error ("Illegal declaration: " ++ showSDocUnsafe (ppr d) ++ " (ctor: " ++ show (toConstr d) ++ ")")
 
 addDefInfo :: forall n r . TransformName n r => (Located (HsDecl n) -> Trf (Ann AST.Decl r)) -> Located (HsDecl n) -> Trf (Ann AST.Decl r)
-addDefInfo f d = AST.annotation .- addSemanticInfo (AST.DefinitionInfo (listToMaybe $ hsGetNames d) :: AST.SemanticInfo n) <$> f d
+addDefInfo f d 
+  = (AST.annotation .- addSemanticInfo (AST.DefinitionInfo (listToMaybe $ hsGetNames d) :: AST.SemanticInfo n))
+      <$> (do tvs <- lift $ getTypeVariablesOf d
+              addTypeVars tvs (f d))
 
 trfGADT nd name vars ctx kind cons derivs ctxTok consLoc
   = AST.GDataDecl <$> trfDataKeyword nd
@@ -136,10 +141,13 @@ trfDataDef nd name vars ctx cons derivs ctxTok consLoc
 
 trfVal :: TransformName n r => HsBindLR n n -> Trf (AST.Decl r)
 trfVal (PatSynBind psb) = AST.PatternSynonymDecl <$> annCont (trfPatternSynonym psb)
-trfVal bind = AST.ValueBinding <$> (annCont $ trfBind' bind)
+trfVal bind = do tvs <- lift $ getTypeVariablesOf bind
+                 addTypeVars tvs (AST.ValueBinding <$> (annCont $ trfBind' bind))
+                
 
 trfSig :: TransformName n r => Sig n -> Trf (AST.Decl r)
-trfSig (ts @ (TypeSig {})) = AST.TypeSigDecl <$> (annCont $ trfTypeSig' ts)
+trfSig (ts @ (TypeSig n _)) = do tvs <- lift $ getTypeVariablesOf ts
+                                 addTypeVars tvs (AST.TypeSigDecl <$> (annCont $ trfTypeSig' ts))
 trfSig (FixSig fs) = AST.FixityDecl <$> (annCont $ trfFixitySig fs)
 trfSig (PatSynSig id typ) 
   = AST.PatTypeSigDecl <$> annCont (AST.PatternTypeSignature <$> trfName id <*> trfType (hsib_body typ))
@@ -240,11 +248,14 @@ trfInstanceHead' = trfInstanceHead'' . cleanHsType where
  
 trfTypeEqs :: TransformName n r => Maybe [Located (TyFamInstEqn n)] -> Trf (AnnList AST.TypeEqn r)
 trfTypeEqs Nothing = makeList "\n" (after AnnWhere) (pure [])
-trfTypeEqs (Just eqs) = makeNonemptyList "\n" (mapM trfTypeEq eqs)
+trfTypeEqs (Just eqs) = makeNonemptyList "\n" (sequence (zipWith trfTypeEq [0..] eqs))
 
-trfTypeEq :: TransformName n r => Located (TyFamInstEqn n) -> Trf (Ann AST.TypeEqn r)
-trfTypeEq = trfLoc $ \(TyFamEqn name pats rhs) 
-  -> AST.TypeEqn <$> define (focusBefore AnnEqual (combineTypes name (hsib_body pats))) <*> trfType rhs
+trfTypeEq :: TransformName n r => Int -> Located (TyFamInstEqn n) -> Trf (Ann AST.TypeEqn r)
+trfTypeEq i = trfLoc $ \(TyFamEqn name pats rhs) 
+  -> do tyVars <- case hsGetNames name of [n] -> lift (lookupName n) >>= \case Just (ATyCon tc) -> trace ("\n+++" ++ showSDocUnsafe (ppr tc)) $ return $ typeVarsInEqs tc !! i
+                                                                               _                -> return []
+                                          _   -> return []
+        addTypeVars tyVars (AST.TypeEqn <$> define (focusBefore AnnEqual (combineTypes name (hsib_body pats))) <*> trfType rhs)
   where combineTypes :: TransformName n r => Located n -> [LHsType n] -> Trf (Ann AST.Type r)
         combineTypes name (lhs : rhs : rest) | srcSpanStart (getLoc name) > srcSpanEnd (getLoc lhs)
           = annCont $ AST.TyInfix <$> trfType lhs <*> trfOperator name <*> trfType rhs
@@ -356,7 +367,7 @@ trfClassInstSig = trfLoc $ \case
   s -> error ("Illegal class instance signature: " ++ showSDocUnsafe (ppr s) ++ " (ctor: " ++ show (toConstr s) ++ ")")
           
 trfInstTypeFam :: TransformName n r => Located (TyFamInstDecl n) -> Trf (Ann AST.InstBodyDecl r)
-trfInstTypeFam (unLoc -> TyFamInstDecl eqn _) = copyAnnot AST.InstBodyTypeDecl (trfTypeEq eqn)
+trfInstTypeFam (unLoc -> TyFamInstDecl eqn _) = copyAnnot AST.InstBodyTypeDecl (trfTypeEq 0 eqn)
 
 trfInstDataFam :: TransformName n r => Located (DataFamInstDecl n) -> Trf (Ann AST.InstBodyDecl r)
 trfInstDataFam = trfLoc $ \case 

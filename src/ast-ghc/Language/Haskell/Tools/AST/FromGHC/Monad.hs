@@ -4,12 +4,14 @@ module Language.Haskell.Tools.AST.FromGHC.Monad where
 
 import SrcLoc
 import GHC
+import OccName as GHC
 import ApiAnnotation
 import Control.Monad.Reader
 import Language.Haskell.Tools.AST.FromGHC.SourceMap
 import Language.Haskell.Tools.AST.FromGHC.GHCUtils
 import Data.Map as Map
 import Data.Maybe
+import Data.List (find)
 
 -- | The (immutable) data for the transformation
 data TrfInput
@@ -19,6 +21,7 @@ data TrfInput
              , localsInScope :: [[GHC.Name]] -- ^ Local names visible
              , defining :: Bool
              , originalNames :: Map SrcSpan RdrName
+             , typeVars :: [GHC.Id]
              }
       
 trfInit :: Map ApiAnnKey [SrcSpan] -> Map String [Located String] -> TrfInput
@@ -29,6 +32,7 @@ trfInit annots comments
              , localsInScope = []
              , defining = False
              , originalNames = empty
+             , typeVars = []
              }
 
 define :: Trf a -> Trf a
@@ -36,6 +40,15 @@ define = local (\s -> s { defining = True })
 
 addToScope :: HsHasName e => e -> Trf a -> Trf a
 addToScope e = local (\s -> s { localsInScope = hsGetNames e : localsInScope s }) 
+
+addTypeVars :: [Id] -> Trf a -> Trf a
+addTypeVars ids = local (\s -> s { typeVars = ids ++ typeVars s }) 
+
+fetchTyVar' :: GHCName n => n -> Trf n
+fetchTyVar' n = asks (maybe n nameFromId . find (\id -> occNameString (GHC.occName (rdrName id)) == occNameString (GHC.occName (rdrName n))) . typeVars)
+
+fetchTyVar :: GHCName n => Located n -> Trf (Located n)
+fetchTyVar (L l n) = L l <$> fetchTyVar' n
 
 addToCurrentScope :: HsHasName e => e -> Trf a -> Trf a
 addToCurrentScope e = local (\s -> s { localsInScope = case localsInScope s of lastScope:rest -> (hsGetNames e ++ lastScope):rest })

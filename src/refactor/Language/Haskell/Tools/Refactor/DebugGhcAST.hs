@@ -29,6 +29,7 @@ import FieldLabel
 import CoreSyn
 import UniqFM
 import OccName
+import Unique
 
 instance Show a => Show (Located a) where
   show (L l a) = "L(" ++ shortShowSpan l ++ ") (" ++ show a ++ ")"
@@ -339,11 +340,11 @@ deriving instance (Show a, Show b) => Show (HsRecField' a b)
 instance Show UnitId where
   show = showSDocUnsafe . ppr
 instance Show Name where
-  show = showSDocUnsafe . ppr
+  show name = showSDocUnsafe (ppr name) ++ "[" ++ show (getUnique name) ++ "]"
 instance Show HsTyLit where
   show = showSDocUnsafe . ppr
 instance Show Var where
-  show = showSDocUnsafe . ppr
+  show name = showSDocUnsafe (ppr name) ++ "[" ++ show (getUnique name) ++ "]"
 instance Show DataCon where
   show = showSDocUnsafe . ppr
 instance Show PatSyn where

@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase
            , ViewPatterns
            , ScopedTypeVariables
+           , FlexibleContexts
            #-}
 module Language.Haskell.Tools.AST.FromGHC.Types where
  
@@ -41,7 +42,7 @@ trfType' = trfType'' . cleanHsType where
                                                  <*> addToScope bndrs (trfType typ)
   trfType'' (HsQualTy ctx typ) = AST.TyCtx <$> (fromJust . (^. annMaybe) <$> trfCtx atTheStart ctx) 
                                           <*> trfType typ
-  trfType'' (HsTyVar name) = AST.TyVar <$> define (trfName name)
+  trfType'' (HsTyVar name) = AST.TyVar <$> define (trfName =<< fetchTyVar name)
   trfType'' (HsAppsTy apps) | Just (head, args) <- getAppsTyHead_maybe apps 
     = foldl (\core t -> AST.TyApp <$> annLoc (pure $ getLoc head `combineSrcSpans` getLoc t) core <*> trfType t) (trfType' (unLoc head)) args
   trfType'' (HsAppTy t1 t2) = AST.TyApp <$> trfType t1 <*> trfType t2
@@ -72,9 +73,9 @@ trfTyVar :: TransformName n r => Located (HsTyVarBndr n) -> Trf (Ann AST.TyVar r
 trfTyVar = trfLoc trfTyVar' 
   
 trfTyVar' :: TransformName n r => HsTyVarBndr n -> Trf (AST.TyVar r)
-trfTyVar' (UserTyVar name) = AST.TyVarDecl <$> trfName name
+trfTyVar' (UserTyVar name) = AST.TyVarDecl <$> (trfName =<< fetchTyVar name)
                                            <*> (nothing " " "" atTheEnd)
-trfTyVar' (KindedTyVar name kind) = AST.TyVarDecl <$> trfName name <*> trfKindSig (Just kind)
+trfTyVar' (KindedTyVar name kind) = AST.TyVarDecl <$> (trfName =<< fetchTyVar name) <*> trfKindSig (Just kind)
   
 trfCtx :: TransformName n r => Trf SrcLoc -> Located (HsContext n) -> Trf (AnnMaybe AST.Context r)
 trfCtx sp (L l []) = nothing " " "" sp

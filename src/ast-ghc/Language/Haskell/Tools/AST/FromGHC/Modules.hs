@@ -48,6 +48,7 @@ import Language.Haskell.Tools.AST (Ann(..), AnnMaybe(..), AnnList(..), RangeWith
 import qualified Language.Haskell.Tools.AST as AST
 
 import Language.Haskell.Tools.AST.FromGHC.Base
+import Language.Haskell.Tools.AST.FromGHC.GHCUtils
 import Language.Haskell.Tools.AST.FromGHC.Decls
 import Language.Haskell.Tools.AST.FromGHC.Monad
 import Language.Haskell.Tools.AST.FromGHC.Utils
@@ -80,15 +81,11 @@ addTypeInfos bnds mod = evalStateT (traverseDown (return ()) (return ()) replace
                                          return (Just id)
                            -- here we compare on occurrence names, because GHC does some re-naming
                            -- this is not a problem, because every time the closest name will be added
-                           Nothing -> gets (find (\v -> nameOccName (GHC.varName v) == nameOccName name))
+                           Nothing -> gets (find (\v -> GHC.varName v == name))
         mapping = Map.fromList $ map (\id -> (getName id, id)) $ extractTypes bnds
         locMapping = Map.fromList $ map (\(L l id) -> (l, id)) $ extractExprIds bnds
         createPatSynType patSyn = case patSynSig patSyn of (_, _, _, _, args, res) -> mkFunTys args res
-
-getTypeVariables :: GHC.TyCon -> [Id]
-getTypeVariables tc
-  = tyConTyVars tc ++ maybe [] (\case (ClosedSynFamilyTyCon ax) -> maybe [] (concatMap cab_tvs . fromBranches . co_ax_branches) ax
-                                      _ -> []) (famTyConFlav_maybe tc)
+        getTypeVariables tc = tyConTyVars tc ++ concat (typeVarsInEqs tc)
 
 extractTypes :: LHsBinds Id -> [Id]
 extractTypes = concatMap universeBi . bagToList

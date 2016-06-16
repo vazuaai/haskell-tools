@@ -3,6 +3,7 @@
            , FlexibleInstances
            , ScopedTypeVariables
            , ViewPatterns
+           , LambdaCase
            #-}
 module Language.Haskell.Tools.AST.FromGHC.GHCUtils where
 
@@ -12,9 +13,14 @@ import GHC
 import Bag
 import RdrName
 import OccName
+import Id
+import TyCon
+import CoAxiom
 import Name
 import Outputable
 import SrcLoc
+
+import Debug.Trace
 
 class OutputableBndr name => GHCName name where 
   rdrName :: name -> RdrName
@@ -43,12 +49,31 @@ instance GHCName GHC.Name where
 
   gunpackPostRn _ f pr = f pr
 
+instance GHCName GHC.Id where
+  rdrName = nameRdrName . idName
+  getBindsAndSigs (ValBindsIn binds sigs) = (sigs, binds)
+  nameFromId = id
+  unpackPostRn _ a = a
+
+  gunpackPostRn _ f pr = f pr
+
 getFieldOccName :: GHCName n => Located (FieldOcc n) -> Located n
 getFieldOccName (L l (FieldOcc (L _ rdr) postRn)) = L l (unpackPostRn rdr postRn)
 
 getFieldOccName' :: GHCName n => FieldOcc n -> n
 getFieldOccName' (FieldOcc (L _ rdr) postRn) = unpackPostRn rdr postRn
 
+getTypeVariablesOf :: HsHasName n => n -> Ghc [Id]
+getTypeVariablesOf n = case hsGetNames n of 
+  [name] -> lookupName name >>= \case Just (AnId id) -> return $ fst $ splitForAllTys (idType id)
+                                      Just (ATyCon tc) -> return $ tyConTyVars tc
+                                      _ -> return []
+  _      -> return []
+
+
+typeVarsInEqs :: TyCon -> [[Id]]
+typeVarsInEqs tc = maybe [] (\case (ClosedSynFamilyTyCon ax) -> maybe [] (map cab_tvs . fromBranches . co_ax_branches) ax
+                                   _ -> []) (famTyConFlav_maybe tc)
 
 class HsHasName a where
   hsGetNames :: a -> [GHC.Name]
@@ -73,6 +98,7 @@ instance HsHasName n => HsHasName (HsLocalBinds n) where
   hsGetNames _ = []
 
 instance (GHCName n, HsHasName n) => HsHasName (HsDecl n) where
+  hsGetNames (SigD sig) = hsGetNames sig
   hsGetNames (TyClD tycl) = hsGetNames tycl
   hsGetNames (ValD vald) = hsGetNames vald
   hsGetNames (ForD ford) = hsGetNames ford
