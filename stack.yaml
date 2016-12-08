@@ -10,6 +10,7 @@ packages:
   - src/cli
   - src/debug
   - src/daemon
+  - ../classyplate
 
 # Dependency packages to be pulled from upstream that are not in the resolver
 extra-deps: 

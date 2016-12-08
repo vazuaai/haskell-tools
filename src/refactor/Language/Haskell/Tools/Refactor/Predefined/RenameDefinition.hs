@@ -33,14 +33,14 @@ type DomainRenameDefinition dom = ( HasNameInfo dom, HasScopeInfo dom, HasDefini
 
 renameDefinition' :: forall dom . DomainRenameDefinition dom => RealSrcSpan -> String -> Refactoring dom
 renameDefinition' sp str mod mods
-  = case (getNodeContaining sp (snd mod) :: Maybe (QualifiedName dom)) >>= (fmap getName . semanticsName) of 
-      Just name -> do let sameNames = bindsWithSameName name (snd mod ^? biplateRef) 
-                      renameDefinition name sameNames str mod mods
+  = case catMaybes $ map (fmap getName . semanticsName) (getContained sp (snd mod) :: [QualifiedName dom]) of 
+      [name] -> do let sameNames = bindsWithSameName name (snd mod ^? biplateRef) 
+                   renameDefinition name sameNames str mod mods
         where bindsWithSameName :: GHC.Name -> [FieldWildcard dom] -> [GHC.Name]
               bindsWithSameName name wcs = catMaybes $ map ((lookup name) . semanticsImplicitFlds) wcs
-      Nothing -> case getNodeContaining sp (snd mod) of
-                   Just modName -> renameModule (modName ^. moduleNameString) str mod mods
-                   Nothing -> refactError "No name is selected"
+      [] -> case getContained sp (snd mod) of
+              [modName] -> renameModule (modName ^. moduleNameString) str mod mods
+              []        -> refactError "No name is selected"
 
 renameModule :: forall dom . DomainRenameDefinition dom => String -> String -> Refactoring dom
 renameModule from to m mods 

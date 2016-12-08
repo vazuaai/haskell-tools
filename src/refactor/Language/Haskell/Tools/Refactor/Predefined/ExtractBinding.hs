@@ -29,7 +29,7 @@ tryItOut mod sp name = tryRefactor (localRefactoring . flip extractBinding' name
 
 extractBinding' :: ExtractBindingDomain dom => RealSrcSpan -> String -> LocalRefactoring dom
 extractBinding' sp name mod
-  = if isValidBindingName name then extractBinding (nodesContaining sp) (nodesContaining sp) name mod
+  = if isValidBindingName name then extractBinding (containingNodes sp) (containingNodes sp) name mod
                                else refactError "The given name is not a valid for the extracted binding"
 
 -- | Safely performs the transformation to introduce the local binding and replace the expression with the call.

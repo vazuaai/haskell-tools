@@ -33,7 +33,7 @@ type GenerateSignatureDomain dom = ( HasModuleInfo dom, HasIdInfo dom, HasImport
 tryItOut = tryRefactor (localRefactoring . generateTypeSignature')
 
 generateTypeSignature' :: GenerateSignatureDomain dom => RealSrcSpan -> LocalRefactoring dom
-generateTypeSignature' sp = generateTypeSignature (nodesContaining sp) (nodesContaining sp) (getValBindInList sp) 
+generateTypeSignature' sp = generateTypeSignature (containingNodes sp) (containingNodes sp) (getValBindInList sp) 
 
 -- | Perform the refactoring on either local or top-level definition
 generateTypeSignature :: GenerateSignatureDomain dom => Simple Traversal (Module dom) (DeclList dom) 

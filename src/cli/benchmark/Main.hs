@@ -32,15 +32,17 @@ rootDir = ".." </> ".." </> "examples"
 
 main :: IO ()
 main = do
-  args <- getArgs
-  (year, month, day) <- date
-  cases <- bms2Mcases (Date {..}) bms
-  case args of 
-    [file] -> writeFile file (show $ encode cases)
-    _ -> putStrLn $ LazyBS.unpack $ encode cases
-  putStrLn "Execution times (cycles):"
-  mapM_ (\c -> putStrLn $ "# " ++ bmId (bm c) ++ ": " ++ showGrouped (measCycles (ms c))) cases
-    where showGrouped = reverse . concat . intersperse " " . chunksOf 3 . reverse . show
+    args <- getArgs
+    (year, month, day) <- date
+    copyDir (rootDir </> "CppHs") (rootDir </> "CppHs_bench")
+    cases <- bms2Mcases (Date {..}) bms
+    case args of 
+      [file] -> writeFile file (show $ encode cases)
+      _ -> putStrLn $ LazyBS.unpack $ encode cases
+    putStrLn "Execution times (cycles):"
+    mapM_ (\c -> putStrLn $ "# " ++ bmId (bm c) ++ ": " ++ showGrouped (measCycles (ms c))) cases
+    removeDirectoryRecursive (rootDir </> "CppHs_bench")
+  where showGrouped = reverse . concat . intersperse " " . chunksOf 3 . reverse . show
 
 date :: IO (Integer,Int,Int) -- (year,month,day)
 date = getCurrentTime >>= return . toGregorian . utctDay
@@ -71,7 +73,7 @@ instance FromJSON BMCase
 instance ToJSON BMCase
 
 bms :: [BM]
-bms = [ BM { bmId = "full-1", workingDir = rootDir </> "CppHs", refactors = [
+bms = [ BM { bmId = "full-1", workingDir = rootDir </> "CppHs_bench", refactors = [
           "SelectModule Language.Preprocessor.Cpphs.CppIfdef"
         , "ExtractBinding 182:8-182:36 parseResult"
         , "RenameDefinition 181:1 gDefined"
@@ -83,14 +85,14 @@ bms = [ BM { bmId = "full-1", workingDir = rootDir </> "CppHs", refactors = [
         , "OrganizeImports"
         , "Exit"
         ]  }
-      , BM { bmId = "full-2", workingDir = rootDir </> "CppHs", refactors = [
+      , BM { bmId = "full-2", workingDir = rootDir </> "CppHs_bench", refactors = [
           "SelectModule Language.Preprocessor.Cpphs.MacroPass"
         , "ExtractBinding 96:29-96:47 tokenizeTT"
         , "ExtractBinding 90:11-90:67 fun"
         , "OrganizeImports"
         , "Exit"
         ]  }
-      , BM { bmId = "full-3", workingDir = rootDir </> "CppHs", refactors = [
+      , BM { bmId = "full-3", workingDir = rootDir </> "CppHs_bench", refactors = [
           "SelectModule Language.Preprocessor.Cpphs.CppIfdef"
         , "ExtractBinding 182:8-182:36 parseResult"
         , "RenameDefinition 181:1 gDefined"
@@ -108,14 +110,14 @@ bms = [ BM { bmId = "full-1", workingDir = rootDir </> "CppHs", refactors = [
         , "OrganizeImports"
         , "Exit"
         ]  }
-      , BM { bmId = "3xGenerateTypeSignature", workingDir = rootDir </> "CppHs", refactors = [
+      , BM { bmId = "3xGenerateTypeSignature", workingDir = rootDir </> "CppHs_bench", refactors = [
           "SelectModule Language.Preprocessor.Cpphs.CppIfdef"
         , "GenerateSignature 51:5-51:5"
         , "GenerateSignature 50:5-50:5"
         , "GenerateSignature 49:5-49:5"
         , "Exit"
         ]  }
-      , BM { bmId ="selects", workingDir = rootDir </> "CppHs", refactors = [
+      , BM { bmId ="selects", workingDir = rootDir </> "CppHs_bench", refactors = [
           "SelectModule Language.Preprocessor.Cpphs.CppIfdef"
         , "SelectModule Language.Preprocessor.Cpphs.MacroPass"
         , "SelectModule Language.Preprocessor.Cpphs.CppIfdef"
@@ -127,7 +129,7 @@ bms = [ BM { bmId = "full-1", workingDir = rootDir </> "CppHs", refactors = [
         , "SelectModule Language.Preprocessor.Cpphs.CppIfdef"
         , "Exit"
         ]  }
-      , BM { bmId ="empty", workingDir = rootDir </> "CppHs", refactors = [ "Exit" ] }
+      , BM { bmId ="empty", workingDir = rootDir </> "CppHs_bench", refactors = [ "Exit" ] }
       ]
 
 
@@ -145,20 +147,15 @@ bm2Mcase :: Date -> BM -> IO BMCase
 bm2Mcase d bm = BMCase bm <$> (bm2Mms bm) <*> (return d)
 
 benchmakable :: String -> [String] -> Benchmarkable -- IO (Either String String)
-benchmakable wd rfs = Benchmarkable $ \ _ -> do
-  makeCliTest wd rfs
+benchmakable wd rfs = Benchmarkable $ \ _ -> makeCliTest wd rfs
 
 makeCliTest :: String -> [String] -> IO ()
 makeCliTest wd rfs = do   
-    copyDir wd (wd ++ "_orig")
-    inKnob <- newKnob (BS.pack $ unlines rfs)
-    inHandle <- newFileHandle inKnob "<input>" ReadMode
-    outKnob <- newKnob (BS.pack [])
-    outHandle <- newFileHandle outKnob "<output>" WriteMode
-    refactorSession inHandle outHandle [wd]
-  `finally` do removeDirectoryRecursive wd
-               renameDirectory (wd ++ "_orig") wd
-
+  inKnob <- newKnob (BS.pack $ unlines rfs)
+  inHandle <- newFileHandle inKnob "<input>" ReadMode
+  outKnob <- newKnob (BS.pack [])
+  outHandle <- newFileHandle outKnob "<output>" WriteMode
+  refactorSession inHandle outHandle [wd]
 
 copyDir ::  FilePath -> FilePath -> IO ()
 copyDir src dst = do

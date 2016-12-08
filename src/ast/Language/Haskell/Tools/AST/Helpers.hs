@@ -6,6 +6,11 @@
            , FlexibleInstances
            , UndecidableInstances
            , PatternSynonyms
+           , TypeApplications
+           , TupleSections
+           , DataKinds
+           , MultiParamTypeClasses
+           , AllowAmbiguousTypes
            #-}
 
 -- | Helper functions for using the AST.
@@ -16,10 +21,14 @@ import qualified Name as GHC
 
 import Control.Reference
 import Control.Monad
+import Control.Monad.Identity
+import Control.Monad.Writer
 import Data.List
 import Data.Maybe
 import Data.Function hiding ((&))
 import Data.Generics.Uniplate.Operations
+import Data.Generics.ClassyPlate
+import Control.Instances.Morph
 
 import Language.Haskell.Tools.AST.Ann
 import Language.Haskell.Tools.AST.Representation.Modules
@@ -32,6 +41,7 @@ import Language.Haskell.Tools.AST.Representation.Names
 import Language.Haskell.Tools.AST.References
 import Language.Haskell.Tools.AST.SemaInfoTypes
 import Language.Haskell.Tools.AST.SemaInfoClasses
+
 
 import Debug.Trace
  
@@ -72,19 +82,19 @@ nodesContaining :: (HasRange (inner dom stage), Biplate (node dom stage) (inner 
 nodesContaining rng = biplateRef & filtered (isInside rng) 
 
 -- | Return true if the node contains a given range
-isInside :: HasRange (inner dom stage) => RealSrcSpan -> inner dom stage -> Bool
+isInside :: HasRange a => RealSrcSpan -> a -> Bool
 isInside rng nd = case getRange nd of RealSrcSpan sp -> sp `containsSpan` rng
                                       _              -> False
 
 -- | Get all nodes that are contained in a given source range
 nodesContained :: (HasRange (inner dom stage), Biplate (node dom stage) (inner dom stage), SourceInfo stage) 
                     => RealSrcSpan -> Simple Traversal (node dom stage) (inner dom stage)
-nodesContained rng = biplateRef & filtered (isContained rng) 
+nodesContained rng = biplateRef & filtered (containing rng) 
 
--- | Return true if the node contains a given range
-isContained :: HasRange (inner dom stage) => RealSrcSpan -> inner dom stage -> Bool
-isContained rng nd = case getRange nd of RealSrcSpan sp -> rng `containsSpan` sp
-                                         _              -> False
+-- | Return true if the range contains a node
+containing :: HasRange a => RealSrcSpan -> a -> Bool
+containing rng nd = case getRange nd of RealSrcSpan sp -> rng `containsSpan` sp
+                                        _              -> False
 
 -- | Get the nodes that have exactly the given range 
 nodesWithRange :: (Biplate (Ann node dom stage) (Ann inner dom stage), SourceInfo stage) 
@@ -108,6 +118,68 @@ compareRangeLength (RealSrcSpan sp1) (RealSrcSpan sp2)
   = (lineDiff sp1 `compare` lineDiff sp2) `mappend` (colDiff sp1 `compare` colDiff sp2)
   where lineDiff sp = srcLocLine (realSrcSpanStart sp) - srcLocLine (realSrcSpanEnd sp)
         colDiff sp = srcLocCol (realSrcSpanStart sp) - srcLocCol (realSrcSpanEnd sp)
+
+-- * Classyplate-based element selection
+
+class HasRange t => BinaryFind a t where
+  onNodes :: (a -> a) -> t -> t
+  onNodesM :: Monad m => (a -> m a) -> t -> m t
+
+instance (HasRange a, ApplyIf (TEQ s a) s a) => BinaryFind s a where
+  onNodes = applyIf @(TEQ s a)
+  {-# INLINE onNodes #-}
+  onNodesM = applyIfM @(TEQ s a)
+  {-# INLINE onNodesM #-}
+
+class ApplyIf (sel :: Bool) x y where
+  applyIf :: (x -> x) -> y -> y
+  applyIfM :: Monad m => (x -> m x) -> y -> m y
+
+instance ApplyIf True x x where
+  applyIf f x = f x
+  {-# INLINE applyIf #-}
+  applyIfM f x = f x
+  {-# INLINE applyIfM #-}
+
+instance ApplyIf False x y where
+  applyIf _ y = y
+  {-# INLINE applyIf #-}
+  applyIfM _ y = return y
+  {-# INLINE applyIfM #-}
+
+type family TEQ a b :: Bool where
+  TEQ a a = True
+  TEQ a b = False
+
+type instance AppSelector (BinaryFind a) t = BinaryFindSelector t
+
+type family BinaryFindSelector t :: Bool where
+  BinaryFindSelector (Ann elem dom stage) = True
+  BinaryFindSelector (AnnListG elem dom stage) = True
+  BinaryFindSelector (AnnMaybeG elem dom stage) = True
+  BinaryFindSelector other = False
+
+onContained :: forall root elem dom stage s . (SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage)) 
+            => RealSrcSpan -> (elem dom stage -> elem dom stage) -> root dom stage -> root dom stage
+onContained sp f = selectiveTraverse @(BinaryFind (elem dom stage)) (\e -> (if (sp `containing` e) then onNodes f e else e, sp `isInside` e))
+
+onContainedM :: forall root elem dom stage s m . (Monad m, SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage)) 
+             => RealSrcSpan -> (elem dom stage -> m (elem dom stage)) -> root dom stage -> m (root dom stage)
+onContainedM sp f = selectiveTraverseM @(BinaryFind (elem dom stage)) (\e -> (if (sp `containing` e) then onNodesM f e else return e) >>= return . (, sp `isInside` e))
+
+containingNodes :: (SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage))
+                => RealSrcSpan -> Simple Traversal (root dom stage) (elem dom stage)
+containingNodes sp = let trav :: (Monad m, SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage)) 
+                              => (elem dom stage -> m (elem dom stage)) -> root dom stage -> m (root dom stage)
+                         trav = onContainedM sp
+                      in reference (morph . execWriter . trav (\a -> tell [a] >> return undefined))
+                                   (\b -> return . (runIdentity . trav (\_ -> Identity b)))
+                                   trav
+
+getContained :: forall root elem dom stage s . (SourceInfo stage, ClassyPlate (BinaryFind (Ann elem dom stage)) (Ann root dom stage)) 
+             => RealSrcSpan -> Ann root dom stage -> [Ann elem dom stage]
+getContained sp root = execWriter (onContainedM sp (\e -> tell [e] >> return e) root)
+
 
 -- | A class to access the names of named elements. Have to locate where does the AST element store its name.
 -- The returned name will be the one that was marked isDefining.
