@@ -4,7 +4,7 @@ import Test.HUnit
 import System.Exit
 import System.Directory
 import System.FilePath
-import Control.Monad (forM_, when)
+import Control.Monad
 import Control.Exception
 import qualified Data.List as List
 import Data.Knob
@@ -14,7 +14,14 @@ import System.IO
 import Language.Haskell.Tools.Refactor.CLI
 
 main :: IO ()
-main = run allTests
+main = do exists <- doesDirectoryExist (testRoot </> testDirCopied)
+          when exists $ removeDirectoryRecursive (testRoot </> testDirCopied)
+          copyDir (testRoot </> "CppHs") (testRoot </> testDirCopied)
+          nightlyTests <- benchTests
+          run (allTests ++ nightlyTests)
+        -- `finally` removeDirectoryRecursive (testRoot </> testDirCopied)
+
+testDirCopied = "CppHs_test"
 
 run :: [Test] -> IO ()
 run tests = do results <- runTestTT $ TestList tests
@@ -41,38 +48,38 @@ makeCliTest (dirs, args, input, output) = let dir = joinPath $ longestCommonPref
 
 cliTests :: [([FilePath], [String], String, String)]
 cliTests 
-  = [ ( [testRoot </> "source-dir"]
+  = [ ( [testRoot </> "Project" </> "source-dir"]
       , ["-dry-run", "-one-shot", "-module-name=A", "-refactoring=\"GenerateSignature 3:1-3:1\""] 
       , "", prefixText ["A"] ++ "### Module changed: A\n### new content:\nmodule A where\n\nx :: ()\nx = ()\n")
-    , ( [testRoot </> "source-dir-outside"]
+    , ( [testRoot </> "Project" </> "source-dir-outside"]
       , ["-dry-run", "-one-shot", "-module-name=A", "-refactoring=\"GenerateSignature 3:1-3:1\""] 
       , "", prefixText ["A"] ++ "### Module changed: A\n### new content:\nmodule A where\n\nx :: ()\nx = ()\n")
-    , ( [testRoot </> "no-cabal"]
+    , ( [testRoot </> "Project" </> "no-cabal"]
       , ["-dry-run", "-one-shot", "-module-name=A", "-refactoring=\"GenerateSignature 3:1-3:1\""] 
       , "", prefixText ["A"] ++ "### Module changed: A\n### new content:\nmodule A where\n\nx :: ()\nx = ()\n")
-    , ( [testRoot </> "has-cabal"]
+    , ( [testRoot </> "Project" </> "has-cabal"]
       , ["-dry-run", "-one-shot", "-module-name=A", "-refactoring=\"GenerateSignature 3:1-3:1\""] 
       , "", prefixText ["A"] ++ "### Module changed: A\n### new content:\nmodule A where\n\nx :: ()\nx = ()\n")
-    , ( [testRoot </> "selection"], [] 
+    , ( [testRoot </> "Project" </> "selection"], [] 
       , "SelectModule C\nSelectModule B\nRenameDefinition 5:1-5:2 bb\nSelectModule C\nRenameDefinition 3:1-3:2 cc\nExit"
       , prefixText ["C","B"] ++ "no-module-selected> C> B> " 
           ++ reloads ["B"] ++ "B> C> "
           ++ reloads ["C", "B"] ++ "C> "
           )
-    , ( [testRoot </> "reloading"], [] 
+    , ( [testRoot </> "Project" </> "reloading"], [] 
       , "SelectModule C\nRenameDefinition 3:1-3:2 cc\nSelectModule B\nRenameDefinition 5:1-5:2 bb\nExit"
       , prefixText ["C","B","A"] ++ "no-module-selected> C> " 
           ++ reloads ["C", "B", "A"] ++ "C> B> "
           ++ reloads ["B", "A"] ++ "B> ")
-    , ( map ((testRoot </> "multi-packages") </>) ["package1", "package2"]
+    , ( map ((testRoot </> "Project" </> "multi-packages") </>) ["package1", "package2"]
       , ["-dry-run", "-one-shot", "-module-name=A", "-refactoring=\"RenameDefinition 3:1-3:2 xx\""], ""
       , prefixText ["B", "A"] ++ "### Module changed: A\n### new content:\nmodule A where\n\nxx = ()\n" 
       )
-    , ( map ((testRoot </> "multi-packages-flags") </>) ["package1", "package2"]
+    , ( map ((testRoot </> "Project" </> "multi-packages-flags") </>) ["package1", "package2"]
       , ["-dry-run", "-one-shot", "-module-name=A", "-refactoring=\"RenameDefinition 3:1-3:2 xx\""], ""
       , prefixText ["B", "A"] ++ "### Module changed: A\n### new content:\nmodule A where\n\nxx = \\case () -> ()\n"
       )
-    , ( map ((testRoot </> "multi-packages-same-module") </>) ["package1", "package2"]
+    , ( map ((testRoot </> "Project" </> "multi-packages-same-module") </>) ["package1", "package2"]
       , ["-dry-run", "-one-shot", "-module-name=A", "-refactoring=\"RenameDefinition 3:1-3:2 xx\""], ""
       , "Compiling modules. This may take some time. Please wait.\nLoaded module: A\n" 
           ++ "The following modules are ignored: A. Multiple modules with the same qualified name are not supported.\n"
@@ -81,7 +88,48 @@ cliTests
       )
     ]
 
-testRoot = ".." </> ".." </> "examples" </> "Project"
+benchTests :: IO [Test]
+benchTests 
+  = forM ["full-1", "full-2", "full-3"] $ \id -> do
+      commands <- readFile ("bench-tests" </> id <.> "txt")
+      return $ makeCliTest ([".." </> ".." </> "examples" </> testDirCopied], [], commands, expectedOut id)
+
+expectedOut "full-1" 
+  = prefixText cppHsMods ++ "no-module-selected> Language.Preprocessor.Cpphs.CppIfdef> "
+      ++ concat (replicate 8 (reloads cppIfDefReloads ++ "Language.Preprocessor.Cpphs.CppIfdef> "))
+expectedOut "full-2" 
+  = prefixText cppHsMods ++ "no-module-selected> Language.Preprocessor.Cpphs.MacroPass> "
+      ++ concat (replicate 3 (reloads macroPassReloads ++ "Language.Preprocessor.Cpphs.MacroPass> "))
+expectedOut "full-3"
+  = prefixText cppHsMods ++ "no-module-selected> Language.Preprocessor.Cpphs.CppIfdef> "
+      ++ concat (replicate 2 (reloads cppIfDefReloads ++ "Language.Preprocessor.Cpphs.CppIfdef> "))
+      ++ "Language.Preprocessor.Cpphs.MacroPass> "
+      ++ reloads macroPassReloads ++ "Language.Preprocessor.Cpphs.MacroPass> "
+      ++ "Language.Preprocessor.Cpphs.CppIfdef> "
+      ++ concat (replicate 3 (reloads cppIfDefReloads ++ "Language.Preprocessor.Cpphs.CppIfdef> "))
+      ++ "Language.Preprocessor.Cpphs.MacroPass> "
+      ++ reloads macroPassReloads ++ "Language.Preprocessor.Cpphs.MacroPass> "
+      ++ "Language.Preprocessor.Cpphs.CppIfdef> "
+      ++ concat (replicate 3 (reloads cppIfDefReloads ++ "Language.Preprocessor.Cpphs.CppIfdef> "))
+
+cppIfDefReloads = [ "Language.Preprocessor.Cpphs.CppIfdef" 
+                  , "Language.Preprocessor.Cpphs.RunCpphs"
+                  , "Language.Preprocessor.Cpphs" ]
+macroPassReloads = "Language.Preprocessor.Cpphs.MacroPass" : cppIfDefReloads
+
+cppHsMods = [ "Language.Preprocessor.Cpphs.Options"
+            , "Language.Preprocessor.Cpphs.SymTab"
+            , "Language.Preprocessor.Cpphs.Position"
+            , "Language.Preprocessor.Cpphs.ReadFirst"
+            , "Language.Preprocessor.Cpphs.HashDefine"
+            , "Language.Preprocessor.Cpphs.Tokenise"
+            , "Language.Preprocessor.Cpphs.MacroPass"
+            , "Language.Preprocessor.Cpphs.CppIfdef"
+            , "Language.Preprocessor.Unlit"
+            , "Language.Preprocessor.Cpphs.RunCpphs"
+            , "Language.Preprocessor.Cpphs" ]
+
+testRoot = ".." </> ".." </> "examples"
 
 prefixText :: [String] -> String
 prefixText mods 

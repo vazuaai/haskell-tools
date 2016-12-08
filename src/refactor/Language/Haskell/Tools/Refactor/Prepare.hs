@@ -49,8 +49,6 @@ import Language.Haskell.Tools.Refactor.RefactorBase
 tryRefactor :: (RealSrcSpan -> Refactoring IdDom) -> String -> String -> IO ()
 tryRefactor refact moduleName span
   = runGhc (Just libdir) $ do
-      initGhcFlags
-      useDirs ["."]
       mod <- loadModule "." moduleName >>= parseTyped
       res <- runRefactor (SourceFileKey NormalHs moduleName, mod) [] 
                $ refact $ correctRefactorSpan mod $ readSrcSpan span 

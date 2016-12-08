@@ -159,22 +159,45 @@ type family BinaryFindSelector t :: Bool where
   BinaryFindSelector (AnnMaybeG elem dom stage) = True
   BinaryFindSelector other = False
 
+-- | Evaluates the given function on the elements of the expected type that are containing a given range
+onContaining :: forall root elem dom stage s . (SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage)) 
+             => RealSrcSpan -> (elem dom stage -> elem dom stage) -> root dom stage -> root dom stage
+onContaining sp f = selectiveTraverse @(BinaryFind (elem dom stage)) (\e -> (onNodes f e, sp `isInside` e))
+
+onContainingM :: forall root elem dom stage s m . (Monad m, SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage)) 
+              => RealSrcSpan -> (elem dom stage -> m (elem dom stage)) -> root dom stage -> m (root dom stage)
+onContainingM sp f = selectiveTraverseM @(BinaryFind (elem dom stage)) (\e -> (onNodesM f e) >>= return . (, sp `isInside` e))
+
+-- | Evaluates the given function on the elmeents of the expected type that are inside a given range
 onContained :: forall root elem dom stage s . (SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage)) 
             => RealSrcSpan -> (elem dom stage -> elem dom stage) -> root dom stage -> root dom stage
-onContained sp f = selectiveTraverse @(BinaryFind (elem dom stage)) (\e -> (if (sp `containing` e) then onNodes f e else e, sp `isInside` e))
+onContained sp f = selectiveTraverse @(BinaryFind (elem dom stage)) (\e -> (if sp `containing` e then onNodes f e else e, sp `isInside` e || sp `containing` e))
 
 onContainedM :: forall root elem dom stage s m . (Monad m, SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage)) 
              => RealSrcSpan -> (elem dom stage -> m (elem dom stage)) -> root dom stage -> m (root dom stage)
-onContainedM sp f = selectiveTraverseM @(BinaryFind (elem dom stage)) (\e -> (if (sp `containing` e) then onNodesM f e else return e) >>= return . (, sp `isInside` e))
+onContainedM sp f = selectiveTraverseM @(BinaryFind (elem dom stage)) (\e -> (if sp `containing` e then onNodesM f e else return e) >>= return . (, sp `isInside` e || sp `containing` e))
+
+
+containedNodes :: (SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage))
+               => RealSrcSpan -> Simple Traversal (root dom stage) (elem dom stage)
+containedNodes sp = createReference (onContainedM sp)
 
 containingNodes :: (SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage))
-                => RealSrcSpan -> Simple Traversal (root dom stage) (elem dom stage)
-containingNodes sp = let trav :: (Monad m, SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage)) 
-                              => (elem dom stage -> m (elem dom stage)) -> root dom stage -> m (root dom stage)
-                         trav = onContainedM sp
-                      in reference (morph . execWriter . trav (\a -> tell [a] >> return undefined))
-                                   (\b -> return . (runIdentity . trav (\_ -> Identity b)))
-                                   trav
+               => RealSrcSpan -> Simple Traversal (root dom stage) (elem dom stage)
+containingNodes sp = createReference (onContainingM sp)
+
+
+createReference :: (SourceInfo stage, ClassyPlate (BinaryFind (elem dom stage)) (root dom stage))
+                => (forall m . Monad m => (elem dom stage -> m (elem dom stage)) -> root dom stage -> m (root dom stage)) 
+                     -> Simple Traversal (root dom stage) (elem dom stage)
+createReference traverse 
+  = reference (morph . execWriter . traverse (\a -> tell [a] >> return a))
+              (\b -> return . (runIdentity . traverse (\_ -> Identity b)))
+              traverse
+
+getContaining :: forall root elem dom stage s . (SourceInfo stage, ClassyPlate (BinaryFind (Ann elem dom stage)) (Ann root dom stage)) 
+              => RealSrcSpan -> Ann root dom stage -> [Ann elem dom stage]
+getContaining sp root = execWriter (onContainingM sp (\e -> tell [e] >> return e) root)
 
 getContained :: forall root elem dom stage s . (SourceInfo stage, ClassyPlate (BinaryFind (Ann elem dom stage)) (Ann root dom stage)) 
              => RealSrcSpan -> Ann root dom stage -> [Ann elem dom stage]

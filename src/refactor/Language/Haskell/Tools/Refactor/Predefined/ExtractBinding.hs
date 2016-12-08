@@ -21,6 +21,8 @@ import Data.Generics.Uniplate.Data
 import Control.Reference
 import Control.Monad.State
 
+import Debug.Trace
+
 import Language.Haskell.Tools.Refactor
 
 type ExtractBindingDomain dom = ( HasNameInfo dom, HasDefiningInfo dom, HasScopeInfo dom )
@@ -29,7 +31,7 @@ tryItOut mod sp name = tryRefactor (localRefactoring . flip extractBinding' name
 
 extractBinding' :: ExtractBindingDomain dom => RealSrcSpan -> String -> LocalRefactoring dom
 extractBinding' sp name mod
-  = if isValidBindingName name then extractBinding (containingNodes sp) (containingNodes sp) name mod
+  = if isValidBindingName name then extractBinding (containingNodes sp) (containedNodes sp) name mod
                                else refactError "The given name is not a valid for the extracted binding"
 
 -- | Safely performs the transformation to introduce the local binding and replace the expression with the call.
@@ -40,14 +42,15 @@ extractBinding :: forall dom . ExtractBindingDomain dom
                    -> String -> LocalRefactoring dom
 extractBinding selectDecl selectExpr name mod
   = let conflicting = any (isConflicting name) (mod ^? selectDecl & biplateRef :: [QualifiedName dom])
-        exprRange = getRange $ head (mod ^? selectDecl & selectExpr)
+        exprRange = getRange $ last (mod ^? selectDecl & selectExpr)
         decl = last (mod ^? selectDecl)
-        declRange = getRange $ last (mod ^? selectDecl)
+        declRange = getRange decl
      in if conflicting
-           then refactError "The given name causes name conflict."
-           else do (res, st) <- runStateT (selectDecl&selectExpr !~ extractThatBind name (head $ decl ^? actualContainingExpr exprRange) $ mod) Nothing
-                   case st of Just def -> return $ evalState (selectDecl !~ addLocalBinding declRange exprRange def $ res) False
-                              Nothing -> refactError "There is no applicable expression to extract."
+          then refactError "The given name causes name conflict."
+          else do (res, st) <- runStateT (selectDecl&selectExpr !~ extractThatBind name (head $ decl ^? actualContainingExpr exprRange) $ mod) Nothing
+                  case st of Just def -> return $ selectDecl & filtered (\e -> getRange e == declRange) 
+                                                    .- addLocalBinding declRange exprRange def $ res
+                             Nothing -> refactError "There is no applicable expression to extract."
 
 -- | Decides if a new name defined to be the given string will conflict with the given AST element
 isConflicting :: ExtractBindingDomain dom => String -> QualifiedName dom -> Bool
@@ -69,19 +72,13 @@ extractThatBind name cont e
             el -> doExtract name cont e
   where hasParameter = not (null (getExternalBinds cont e))
 
--- | Adds a local binding to the 
-addLocalBinding :: SrcSpan -> SrcSpan -> ValueBind dom -> ValueBind dom -> State Bool (ValueBind dom)
--- this uses the state monad to only add the local binding to the first selected element
-addLocalBinding declRange exprRange local bind 
-  = do done <- get
-       if not done then do put True
-                           return $ doAddBinding declRange exprRange local bind
-                   else return bind 
-  where
-    doAddBinding declRng _ local sb@(SimpleBind {}) = valBindLocals .- insertLocalBind declRng local $ sb
-    doAddBinding declRng (RealSrcSpan rng) local fb@(FunctionBind {}) 
-      = funBindMatches & annList & filtered (isInside rng) & matchBinds 
-          .- insertLocalBind declRng local $ fb
+-- | Adds a local binding to the containing definition
+addLocalBinding :: SrcSpan -> SrcSpan -> ValueBind dom -> ValueBind dom -> ValueBind dom
+addLocalBinding declRange _ local sb@(SimpleBind{}) 
+  = valBindLocals .- insertLocalBind declRange local $ sb
+addLocalBinding declRange (RealSrcSpan expRng) local fb
+  = funBindMatches & annList & filtered (isInside expRng) & matchBinds 
+      .- insertLocalBind declRange local $ fb
 
 -- | Puts a value definition into a list of local binds
 insertLocalBind :: SrcSpan -> ValueBind dom -> MaybeLocalBinds dom -> MaybeLocalBinds dom
