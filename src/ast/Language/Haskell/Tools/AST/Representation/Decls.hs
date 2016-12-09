@@ -182,6 +182,8 @@ data UInstBodyDecl dom stage
                           } -- ^ An associated data type implemented using GADT style
   | USpecializeInstance   { _specializeInstanceType :: Ann UType dom stage
                           } -- ^ Specialize instance pragma (no phase selection is allowed)
+  | UInlineInstance       { _instanceInlineDef :: Ann UName dom stage 
+                          } -- ^ Inline instance pragma
   -- not supported yet
   -- | UInstBodyPatSyn       { _instBodyPatSyn :: Ann UPatternSynonym dom stage
   --                         } -- ^ A pattern synonym in a class instance

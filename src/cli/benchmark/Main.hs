@@ -34,9 +34,6 @@ main :: IO ()
 main = do
     args <- getArgs
     (year, month, day) <- date
-    exists <- doesDirectoryExist (rootDir </> "CppHs_bench")
-    when exists $ removeDirectoryRecursive (rootDir </> "CppHs_bench")
-    copyDir (rootDir </> "CppHs") (rootDir </> "CppHs_bench")
     benches <- bms
     cases <- bms2Mcases (Date {..}) benches
     case args of 
@@ -44,7 +41,6 @@ main = do
       _ -> putStrLn $ LazyBS.unpack $ encode cases
     putStrLn "Execution times (cycles):"
     mapM_ (\c -> putStrLn $ "# " ++ bmId (bm c) ++ ": " ++ showGrouped (measCycles (ms c))) cases
-    removeDirectoryRecursive (rootDir </> "CppHs_bench")
   where showGrouped = reverse . concat . intersperse " " . chunksOf 3 . reverse . show
 
 date :: IO (Integer,Int,Int) -- (year,month,day)
@@ -96,7 +92,10 @@ benchmakable :: String -> [String] -> Benchmarkable -- IO (Either String String)
 benchmakable wd rfs = Benchmarkable $ \ _ -> makeCliTest wd rfs
 
 makeCliTest :: String -> [String] -> IO ()
-makeCliTest wd rfs = do   
+makeCliTest wd rfs = do
+  exists <- doesDirectoryExist (rootDir </> "CppHs_bench")
+  when exists $ removeDirectoryRecursive (rootDir </> "CppHs_bench")
+  copyDir (rootDir </> "CppHs") (rootDir </> "CppHs_bench")
   inKnob <- newKnob (BS.pack $ unlines rfs)
   inHandle <- newFileHandle inKnob "<input>" ReadMode
   outKnob <- newKnob (BS.pack [])

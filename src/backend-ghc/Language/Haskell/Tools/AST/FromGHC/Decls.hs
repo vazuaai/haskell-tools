@@ -382,6 +382,7 @@ trfClassInstSig = trfLocNoSema $ \case
   ClassOpSig _ names typ -> AST.UInstBodyTypeSig <$> (annContNoSema $ AST.UTypeSignature <$> define (makeNonemptyList ", " (mapM trfName names)) 
                                                 <*> trfType (hsib_body typ))
   SpecInstSig _ typ -> AST.USpecializeInstance <$> trfType (hsib_body typ)
+  InlineSig name (InlinePragma _ Inline _ _ _) -> AST.UInlineInstance <$> trfName name
   s -> error ("Illegal class instance signature: " ++ showSDocUnsafe (ppr s) ++ " (ctor: " ++ show (toConstr s) ++ ")")
           
 trfInstTypeFam :: TransformName n r => Located (TyFamInstDecl n) -> Trf (Ann AST.UInstBodyDecl (Dom r) RangeStage)
