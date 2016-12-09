@@ -14,14 +14,8 @@ import System.IO
 import Language.Haskell.Tools.Refactor.CLI
 
 main :: IO ()
-main = do exists <- doesDirectoryExist (testRoot </> testDirCopied)
-          when exists $ removeDirectoryRecursive (testRoot </> testDirCopied)
-          copyDir (testRoot </> "CppHs") (testRoot </> testDirCopied)
-          nightlyTests <- benchTests
+main = do nightlyTests <- benchTests
           run (allTests ++ nightlyTests)
-        -- `finally` removeDirectoryRecursive (testRoot </> testDirCopied)
-
-testDirCopied = "CppHs_test"
 
 run :: [Test] -> IO ()
 run tests = do results <- runTestTT $ TestList tests
@@ -34,17 +28,19 @@ allTests = map makeCliTest cliTests
 
 makeCliTest :: ([FilePath], [String], String, String) -> Test
 makeCliTest (dirs, args, input, output) = let dir = joinPath $ longestCommonPrefix $ map splitDirectories dirs
+                                              testdirs = map (((dir ++ "_test") </>) . makeRelative dir) dirs
   in TestLabel dir $ TestCase $ do   
-    copyDir dir (dir ++ "_orig")
+    exists <- doesDirectoryExist (dir ++ "_test")
+    when exists $ removeDirectoryRecursive (dir ++ "_test")
+    copyDir dir (dir ++ "_test")
     inKnob <- newKnob (pack input)
     inHandle <- newFileHandle inKnob "<input>" ReadMode
     outKnob <- newKnob (pack [])
     outHandle <- newFileHandle outKnob "<output>" WriteMode
-    res <- refactorSession inHandle outHandle (args ++ dirs)
+    res <- refactorSession inHandle outHandle (args ++ testdirs)
     actualOut <- Data.Knob.getContents outKnob
     assertEqual "" (filter (/= '\r') output) (filter (/= '\r') $ unpack actualOut)
-  `finally` do removeDirectoryRecursive dir
-               renameDirectory (dir ++ "_orig") dir
+  `finally` removeDirectoryRecursive (dir ++ "_test")
 
 cliTests :: [([FilePath], [String], String, String)]
 cliTests 
@@ -92,7 +88,7 @@ benchTests :: IO [Test]
 benchTests 
   = forM ["full-1", "full-2", "full-3"] $ \id -> do
       commands <- readFile ("bench-tests" </> id <.> "txt")
-      return $ makeCliTest ([".." </> ".." </> "examples" </> testDirCopied], [], commands, expectedOut id)
+      return $ makeCliTest ([".." </> ".." </> "examples" </> "CppHs"], [], commands, expectedOut id)
 
 expectedOut "full-1" 
   = prefixText cppHsMods ++ "no-module-selected> Language.Preprocessor.Cpphs.CppIfdef> "
