@@ -35,9 +35,9 @@ type InlineBindingDomain dom = ( HasNameInfo dom, HasDefiningInfo dom, HasScopeI
 inlineBinding :: forall dom . InlineBindingDomain dom => RealSrcSpan -> Refactoring dom
 inlineBinding span namedMod@(_,mod) mods 
   = let topLevel :: Simple Traversal (Module dom) (DeclList dom)
-        topLevel = nodesContaining span
+        topLevel = containingNodes span
         local :: Simple Traversal (Module dom) (LocalBindList dom)
-        local = nodesContaining span
+        local = containingNodes span
         elemAccess :: (BindingElem d) => AnnList d dom -> Maybe (ValueBind dom)
         elemAccess = getValBindInList span
         removed = catMaybes $ map elemAccess (mod ^? topLevel) ++ map elemAccess (mod ^? local)

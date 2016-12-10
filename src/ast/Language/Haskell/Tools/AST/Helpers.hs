@@ -76,11 +76,6 @@ valBindPats = valBindPat &+& funBindMatches & annList & matchLhs & (matchLhsArgs
 semantics :: Simple Lens (Ann elem dom stage) (SemanticInfo dom elem)
 semantics = annotation&semanticInfo
 
--- | Get all nodes that contain a given source range
-nodesContaining :: (HasRange (inner dom stage), Biplate (node dom stage) (inner dom stage), SourceInfo stage) 
-                => RealSrcSpan -> Simple Traversal (node dom stage) (inner dom stage)
-nodesContaining rng = biplateRef & filtered (isInside rng) 
-
 -- | Return true if the node contains a given range
 isInside :: HasRange a => RealSrcSpan -> a -> Bool
 isInside rng nd = case getRange nd of RealSrcSpan sp -> sp `containsSpan` rng
@@ -104,13 +99,6 @@ nodesWithRange rng = biplateRef & filtered (hasRange rng)
         hasRange :: SourceInfo stage => RealSrcSpan -> Ann inner dom stage -> Bool
         hasRange rng node = case getRange node of RealSrcSpan sp -> sp == rng
                                                   _              -> False
-
--- | Get the shortest source range that contains the given 
-getNodeContaining :: (Biplate (Ann node dom stage) (Ann inner dom stage), SourceInfo stage, HasRange (Ann inner dom stage)) 
-                  => RealSrcSpan -> Ann node dom stage -> Maybe (Ann inner dom stage)
-getNodeContaining sp node = case node ^? nodesContaining sp of
-  [] -> Nothing
-  results -> Just $ minimumBy (compareRangeLength `on` getRange) results
 
 -- | Compares two source spans based on their lengths. Can only used for NESTED spans.
 compareRangeLength :: SrcSpan -> SrcSpan -> Ordering
