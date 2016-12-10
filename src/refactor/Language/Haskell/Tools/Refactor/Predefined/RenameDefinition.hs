@@ -34,7 +34,7 @@ type DomainRenameDefinition dom = ( HasNameInfo dom, HasScopeInfo dom, HasDefini
 renameDefinition' :: forall dom . DomainRenameDefinition dom => RealSrcSpan -> String -> Refactoring dom
 renameDefinition' sp str mod mods
   = case catMaybes $ map (fmap getName . semanticsName) (snd mod ^? containingNodes sp :: [QualifiedName dom]) of 
-      [name] -> do let sameNames = bindsWithSameName name (snd mod ^? biplateRef) 
+      [name] -> do let sameNames = bindsWithSameName name (snd mod ^? bottomUpRef) 
                    renameDefinition name sameNames str mod mods
         where bindsWithSameName :: GHC.Name -> [FieldWildcard dom] -> [GHC.Name]
               bindsWithSameName name wcs = catMaybes $ map ((lookup name) . semanticsImplicitFlds) wcs
@@ -56,11 +56,11 @@ renameModule from to m mods
         alterChange _ _ c = c 
 
         replaceModuleNames :: LocalRefactoring dom
-        replaceModuleNames = biplateRef @_ @(ModuleName dom) & filtered (\e -> (e ^. moduleNameString) == from) != mkModuleName to
+        replaceModuleNames = bottomUpRef @_ @(ModuleName dom) & filtered (\e -> (e ^. moduleNameString) == from) != mkModuleName to
 
         alterNormalNames :: LocalRefactoring dom
         alterNormalNames mod = if from `elem` moduleQualifiers mod 
-           then biplateRef @_ @(QualifiedName dom) & filtered (\e -> concat (intersperse "." (e ^? qualifiers&annList&simpleNameStr)) == from)
+           then bottomUpRef @_ @(QualifiedName dom) & filtered (\e -> concat (intersperse "." (e ^? qualifiers&annList&simpleNameStr)) == from)
                   !- (\e -> mkQualifiedName (splitOn "." to) (e ^. unqualifiedName&simpleNameStr)) $ mod
            else return mod
 
@@ -86,7 +86,9 @@ renameDefinition toChangeOrig toChangeWith newName mod mods
     renameInAModule :: DomainRenameDefinition dom => GHC.Name -> [GHC.Name] -> String -> ModuleDom dom -> StateT Bool Refactor (Maybe (ModuleDom dom))
     renameInAModule toChangeOrig toChangeWith newName (name, mod)
       = mapStateT (localRefactoringRes (\f (a,s) -> (fmap (\(n,r) -> (n, f r)) a,s)) mod) $
-          do (res, isChanged) <- runStateT (biplateRef !~ changeName toChangeOrig toChangeWith newName $ mod) False
+          do let allNames :: Simple Traversal (Module dom) (QualifiedName dom)
+                 allNames = bottomUpRef
+             (res, isChanged) <- runStateT (allNames !~ changeName toChangeOrig toChangeWith newName $ mod) False
              if isChanged then return $ Just (name, res)
                           else return Nothing
 

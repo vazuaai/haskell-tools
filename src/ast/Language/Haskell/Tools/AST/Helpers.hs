@@ -81,24 +81,10 @@ isInside :: HasRange a => RealSrcSpan -> a -> Bool
 isInside rng nd = case getRange nd of RealSrcSpan sp -> sp `containsSpan` rng
                                       _              -> False
 
--- | Get all nodes that are contained in a given source range
-nodesContained :: (HasRange (inner dom stage), Biplate (node dom stage) (inner dom stage), SourceInfo stage) 
-                    => RealSrcSpan -> Simple Traversal (node dom stage) (inner dom stage)
-nodesContained rng = biplateRef & filtered (containing rng) 
-
 -- | Return true if the range contains a node
 containing :: HasRange a => RealSrcSpan -> a -> Bool
 containing rng nd = case getRange nd of RealSrcSpan sp -> rng `containsSpan` sp
                                         _              -> False
-
--- | Get the nodes that have exactly the given range 
-nodesWithRange :: (Biplate (Ann node dom stage) (Ann inner dom stage), SourceInfo stage) 
-               => RealSrcSpan -> Simple Traversal (Ann node dom stage) (Ann inner dom stage)
-nodesWithRange rng = biplateRef & filtered (hasRange rng) 
-  where -- True, if the node has the given range                     
-        hasRange :: SourceInfo stage => RealSrcSpan -> Ann inner dom stage -> Bool
-        hasRange rng node = case getRange node of RealSrcSpan sp -> sp == rng
-                                                  _              -> False
 
 -- | Compares two source spans based on their lengths. Can only used for NESTED spans.
 compareRangeLength :: SrcSpan -> SrcSpan -> Ordering
@@ -106,6 +92,16 @@ compareRangeLength (RealSrcSpan sp1) (RealSrcSpan sp2)
   = (lineDiff sp1 `compare` lineDiff sp2) `mappend` (colDiff sp1 `compare` colDiff sp2)
   where lineDiff sp = srcLocLine (realSrcSpanStart sp) - srcLocLine (realSrcSpanEnd sp)
         colDiff sp = srcLocCol (realSrcSpanStart sp) - srcLocCol (realSrcSpanEnd sp)
+
+-- * Classyplate-based references
+
+bottomUpRef :: forall a b . ClassyPlate (MonoMatch b) a => Simple Traversal a b
+bottomUpRef 
+  = let traverse :: Monad m => (b -> m b) -> a -> m a
+        traverse f = bottomUpM @(MonoMatch b) (monoAppM f)
+     in reference (morph . execWriter . traverse (\a -> tell [a] >> return a))
+                  (\b -> return . (runIdentity . traverse (\_ -> Identity b)))
+                  traverse
 
 -- * Classyplate-based element selection
 

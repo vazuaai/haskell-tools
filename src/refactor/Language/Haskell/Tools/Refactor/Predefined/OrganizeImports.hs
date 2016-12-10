@@ -35,7 +35,7 @@ organizeImports mod
   where usedNames = map getName $ catMaybes $ map semanticsName
                         -- obviously we don't want the names in the imports to be considered, but both from
                         -- the declarations (used), both from the module head (re-exported) will count as usage
-                      $ (universeBi (mod ^. modHead) ++ universeBi (mod ^. modDecl) :: [QualifiedName dom])
+                      $ ((mod ^? modHead & bottomUpRef) ++ (mod ^? modDecl & bottomUpRef) :: [QualifiedName dom])
         
 -- | Sorts the imports in alphabetical order
 sortImports :: [ImportDecl dom] -> [ImportDecl dom]

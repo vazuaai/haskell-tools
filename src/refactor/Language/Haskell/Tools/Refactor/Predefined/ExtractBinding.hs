@@ -41,7 +41,7 @@ extractBinding :: forall dom . ExtractBindingDomain dom
                    -> Simple Traversal (ValueBind dom) (Expr dom)
                    -> String -> LocalRefactoring dom
 extractBinding selectDecl selectExpr name mod
-  = let conflicting = any (isConflicting name) (mod ^? selectDecl & biplateRef :: [QualifiedName dom])
+  = let conflicting = any (isConflicting name) (mod ^? selectDecl & bottomUpRef :: [QualifiedName dom])
         exprRange = getRange $ last (mod ^? selectDecl & selectExpr)
         decl = last (mod ^? selectDecl)
         declRange = getRange decl
@@ -121,7 +121,7 @@ doExtract name cont e
 
 -- | Gets the values that have to be passed to the extracted definition
 getExternalBinds :: ExtractBindingDomain dom => Expr dom -> Expr dom -> [Name dom]
-getExternalBinds cont expr = map exprToName $ keepFirsts $ filter isApplicableName (expr ^? uniplateRef)
+getExternalBinds cont expr = map exprToName $ keepFirsts $ filter isApplicableName (expr ^? bottomUpRef)
   where isApplicableName name@(getExprNameInfo -> Just nm) = inScopeForOriginal nm && notInScopeForExtracted nm
         isApplicableName _ = False
 

@@ -142,7 +142,7 @@ makeClassyPlate [] ''UCmd
 makeClassyPlate [ Right '_langExt ] ''ULanguageExtension
 makeClassyPlate [] ''UMatchLhs
 
--- ULiteral
+-- Literal
 makeClassyPlate [ Right '_charLitValue, Right '_stringLitValue, Right '_intLitValue, Right '_fracLitValue, Right '_floatLitValue ] ''ULiteral
 makeClassyPlate [ Right '_promotedIntValue, Right '_promotedStringValue ] ''UPromoted
 

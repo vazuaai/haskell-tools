@@ -36,7 +36,7 @@ generateTypeSignature' :: GenerateSignatureDomain dom => RealSrcSpan -> LocalRef
 generateTypeSignature' sp = generateTypeSignature (containingNodes sp) (containingNodes sp) (getValBindInList sp) 
 
 -- | Perform the refactoring on either local or top-level definition
-generateTypeSignature :: GenerateSignatureDomain dom => Simple Traversal (Module dom) (DeclList dom) 
+generateTypeSignature :: forall dom . GenerateSignatureDomain dom => Simple Traversal (Module dom) (DeclList dom) 
                                 -- ^ Access for a top-level definition if it is the selected definition
                            -> Simple Traversal (Module dom) (LocalBindList dom) 
                                 -- ^ Access for a definition list if it contains the selected definition
@@ -44,8 +44,10 @@ generateTypeSignature :: GenerateSignatureDomain dom => Simple Traversal (Module
                                 -- ^ Selector for either local or top-level declaration in the definition list
                            -> LocalRefactoring dom
 generateTypeSignature topLevelRef localRef vbAccess mod
-  = let typeSigs = universeBi mod
-        bindings = universeBi mod
+  = let typeSigs :: [TypeSignature dom]
+        typeSigs = mod ^? bottomUpRef
+        bindings :: [ValueBind dom]
+        bindings = mod ^? bottomUpRef
         findTypeSigFor id = find (\ts -> any (id ==) $ map semanticsId (ts ^? tsName & annList & simpleName))
         bindsWithSigs = catMaybes $ concatMap (\b -> map (\n -> let id = semanticsId n in fmap (id,,b) (findTypeSigFor id typeSigs)) (b ^? bindingName)) bindings 
         scopedSigs = hasScopedTypeSignatures mod
@@ -90,7 +92,7 @@ genTypeSig scopedSigs sigBinds vbAccess ls
                                         _ -> True
         dangerousTVs vb scopedSigs sigBinds
           = let dangerousDecls = if scopedSigs then filter (\(_,ts,_) -> not $ isForalledTS ts) sigBinds else sigBinds
-                dangerousNames = map (\(_,_,bn) -> bn ^? (valBindPats & biplateRef &+& bindingName)) dangerousDecls
+                dangerousNames = map (\(_,_,bn) -> bn ^? (valBindPats & bottomUpRef &+& bindingName)) dangerousDecls
              in concatMap (concatMap @[] (getExternalTVs . idType .  semanticsId @(QualifiedName dom))) dangerousNames
 
 generateTSFor :: GenerateSignatureDomain dom => GHC.Name -> GHC.Type -> LocalRefactor dom (TypeSignature dom)

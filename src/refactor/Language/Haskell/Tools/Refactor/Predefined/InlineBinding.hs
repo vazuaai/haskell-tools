@@ -47,7 +47,7 @@ inlineBinding span namedMod@(_,mod) mods
            let [removedBindingName] = nub $ catMaybes $ map semanticsName (removedBinding ^? bindingName)
             in if | any (containInlined removedBindingName) mods
                     -> refactError "Cannot inline the definition, it is used in other modules." 
-                  | _:_ <- mod ^? modHead & annJust & mhExports & annJust & biplateRef 
+                  | _:_ <- mod ^? modHead & annJust & mhExports & annJust & bottomUpRef 
                                           & filtered (\n -> semanticsName (n :: QualifiedName dom) == Just removedBindingName)
                     -> refactError "Cannot inline the definition, it is present in the export list."
                   | otherwise -> localRefactoring (inlineBinding' topLevel local removedBinding removedBindingName) namedMod mods
@@ -69,7 +69,7 @@ inlineBinding' topLevelRef localRef removedBinding removedBindingName mod
 -- | True if the given module contains the name of the inlined definition.
 containInlined :: forall dom . InlineBindingDomain dom => GHC.Name -> ModuleDom dom -> Bool
 containInlined name (_,mod) 
-  = any (\qn -> semanticsName qn == Just name) $ (mod ^? biplateRef :: [QualifiedName dom])
+  = any (\qn -> semanticsName qn == Just name) $ (mod ^? bottomUpRef :: [QualifiedName dom])
 
 -- | Removes the inlined binding and the accompanying type and fixity signatures.
 removeBindingAndSig :: InlineBindingDomain dom 
@@ -147,7 +147,7 @@ createReplacement (FunctionBind matches)
 -- | Replaces names with expressions according to a mapping.
 replaceExprs :: InlineBindingDomain dom => [(GHC.Name, Expr dom)] -> Expr dom -> Expr dom
 replaceExprs [] = id
-replaceExprs replaces = (uniplateRef .-) $ \case 
+replaceExprs replaces = (bottomUpRef .-) $ \case 
     Var n | Just name <- semanticsName (n ^. simpleName)
           , Just replace <- lookup name replaces
           -> replace
