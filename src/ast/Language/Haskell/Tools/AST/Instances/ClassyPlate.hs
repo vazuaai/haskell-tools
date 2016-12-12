@@ -39,18 +39,28 @@ instance (GoodOperationFor c [a], ClassyPlate c a) => ClassyPlate c [a] where
   bottomUpM_ t f ls = appM (undefined :: FlagToken (AppSelector c [a])) t f =<< mapM (bottomUpM_ t f) ls
 
   descend_ t f ls = map (appTD (undefined :: FlagToken (AppSelector c a)) t f (descend_ t f)) ls
-  descendM_ t f ls = mapM (appTDM (undefined :: FlagToken (AppSelector c a)) t f (descendM_ t f)) ls
+  descendM_ t f ls = mapM (appTDM (undefined :: FlagToken (AppSelector c a)) t f (descendM_ t f)) ls 
 
-instance (GoodOperationFor c (Maybe a), ClassyPlate c a) => ClassyPlate c (Maybe a) where
-  topDown_ t f mb = fmap (topDown_ t f) $ app (undefined :: FlagToken (AppSelector c (Maybe a))) t f mb
-  topDownM_ t f mb = maybe (return Nothing) (fmap Just . topDownM_ t f) =<< appM (undefined :: FlagToken (AppSelector c (Maybe a))) t f mb
+-- we don't need to do addition check here
+instance (GoodOperationForAuto c [a], SmartClassyPlate' c flag a) => SmartClassyPlate' c flag [a] where
+  smartTraverse_ _ t f ls = map (smartTraverse_ (undefined :: FlagToken flag) t f) $ app (undefined :: FlagToken (AppSelector c [a])) t f ls
+  smartTraverseM_ _ t f ls = mapM (smartTraverseM_ (undefined :: FlagToken flag) t f) =<< appM (undefined :: FlagToken (AppSelector c [a])) t f ls
 
-  bottomUp_ t f mb = app (undefined :: FlagToken (AppSelector c (Maybe a))) t f $ fmap (bottomUp_ t f) mb
-  bottomUpM_ t f mb = appM (undefined :: FlagToken (AppSelector c (Maybe a))) t f =<< maybe (return Nothing) (fmap Just . bottomUpM_ t f) mb
+type instance IgnoredFields [a] = '[]
 
-  descend_ t f mb = fmap (appTD (undefined :: FlagToken (AppSelector c a)) t f (descend_ t f)) mb
-  descendM_ t f mb = maybe (return Nothing) (fmap Just . appTDM (undefined :: FlagToken (AppSelector c a)) t f (descendM_ t f)) mb
+-- instance (GoodOperationFor c (Maybe a), ClassyPlate c a) => ClassyPlate c (Maybe a) where
+--   topDown_ t f mb = fmap (topDown_ t f) $ app (undefined :: FlagToken (AppSelector c (Maybe a))) t f mb
+--   topDownM_ t f mb = maybe (return Nothing) (fmap Just . topDownM_ t f) =<< appM (undefined :: FlagToken (AppSelector c (Maybe a))) t f mb
 
+--   bottomUp_ t f mb = app (undefined :: FlagToken (AppSelector c (Maybe a))) t f $ fmap (bottomUp_ t f) mb
+--   bottomUpM_ t f mb = appM (undefined :: FlagToken (AppSelector c (Maybe a))) t f =<< maybe (return Nothing) (fmap Just . bottomUpM_ t f) mb
+
+--   descend_ t f mb = fmap (appTD (undefined :: FlagToken (AppSelector c a)) t f (descend_ t f)) mb
+--   descendM_ t f mb = maybe (return Nothing) (fmap Just . appTDM (undefined :: FlagToken (AppSelector c a)) t f (descendM_ t f)) mb
+
+-- type instance IgnoredFields (Maybe a) = '[]
+
+makeClassyPlate [] ''Maybe
 
 -- Annotations
 makeClassyPlate [ Right '_annotation ] ''Ann

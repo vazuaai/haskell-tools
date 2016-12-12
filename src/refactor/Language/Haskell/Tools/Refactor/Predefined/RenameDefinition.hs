@@ -86,9 +86,7 @@ renameDefinition toChangeOrig toChangeWith newName mod mods
     renameInAModule :: DomainRenameDefinition dom => GHC.Name -> [GHC.Name] -> String -> ModuleDom dom -> StateT Bool Refactor (Maybe (ModuleDom dom))
     renameInAModule toChangeOrig toChangeWith newName (name, mod)
       = mapStateT (localRefactoringRes (\f (a,s) -> (fmap (\(n,r) -> (n, f r)) a,s)) mod) $
-          do let allNames :: Simple Traversal (Module dom) (QualifiedName dom)
-                 allNames = bottomUpRef
-             (res, isChanged) <- runStateT (allNames !~ changeName toChangeOrig toChangeWith newName $ mod) False
+          do (res, isChanged) <- runStateT (bottomUpRef !~ changeName toChangeOrig toChangeWith newName $ mod) False
              if isChanged then return $ Just (name, res)
                           else return Nothing
 
