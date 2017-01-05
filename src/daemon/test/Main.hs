@@ -93,15 +93,16 @@ loadingTests =
   , ( "cabal-sandbox"
     , [AddPackages [testRoot </> "cabal-sandbox"] CabalSandboxDB]
     , [LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]] )
-  , ( "stack"
-    , [AddPackages [testRoot </> "stack"] StackDB]
-    , [LoadedModules [testRoot </> "stack" </> "A.hs"]] )
-  , ( "cabal-sandbox"
-    , [AddPackages [testRoot </> "cabal-sandbox"] AutoDB]
-    , [LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]] )
-  , ( "stack"
-    , [AddPackages [testRoot </> "stack"] AutoDB]
-    , [LoadedModules [testRoot </> "stack" </> "A.hs"]] )
+  -- need to programmatically create the test environment
+  -- , ( "stack"
+  --   , [AddPackages [testRoot </> "stack"] StackDB]
+  --   , [LoadedModules [testRoot </> "stack" </> "A.hs"]] )
+  -- , ( "cabal-sandbox"
+  --   , [AddPackages [testRoot </> "cabal-sandbox"] AutoDB]
+  --   , [LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]] )
+  -- , ( "stack"
+  --   , [AddPackages [testRoot </> "stack"] AutoDB]
+  --   , [LoadedModules [testRoot </> "stack" </> "A.hs"]] )
   ]
 
 sourceRoot = ".." </> ".." </> "src"
@@ -167,6 +168,14 @@ reloadingTests =
       , LoadedModules [ testRoot </> "reloading" ++ testSuffix </> "A.hs" ]
       ]
     )
+  -- need to programmatically create the test environment
+  -- , ( "pkg-db-reload", testRoot </> "cabal-sandbox"
+  --   , [ AddPackages [testRoot </> "cabal-sandbox" ++ testSuffix] AutoDB ]
+  --   , return ()
+  --   , [ ReLoad [testRoot </> "cabal-sandbox" ++ testSuffix </> "UseGroups.hs"] []]
+  --   , [ LoadedModules [testRoot </> "cabal-sandbox" ++ testSuffix </> "UseGroups.hs"]
+  --     , LoadedModules [testRoot </> "cabal-sandbox" ++ testSuffix </> "UseGroups.hs"]
+  --     ] )
   , ( "reloading-package", testRoot </> "changing-cabal"
     , [ AddPackages [ testRoot </> "changing-cabal" ++ testSuffix ] DefaultDB]
     , appendFile (testRoot </> "changing-cabal" ++ testSuffix </> "some-test-package.cabal") ", B" 

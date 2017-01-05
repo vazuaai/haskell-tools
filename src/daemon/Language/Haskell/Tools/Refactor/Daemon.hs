@@ -130,9 +130,8 @@ updateClient resp (AddPackages packagePathes packageDB) = do
     forM_ existing $ \mn -> removeTarget (TargetModule (GHC.moduleName mn))
     modifySession (\s -> s { hsc_mod_graph = filter (not . (`elem` existing) . ms_mod) (hsc_mod_graph s) })
     pkgDbLocs <- liftIO $ packageDBLocs packageDB packagePathes
-    modify $ refSessMCs & traversal & filtered (not . (`elem` existingMCs)) & mcPkgDBs .= pkgDbLocs
-    (modules, ignoredMods) <- usePackageDB pkgDbLocs
-                                $ loadPackagesFrom (return . getModSumOrig) packagePathes
+    usePackageDB pkgDbLocs
+    (modules, ignoredMods) <- loadPackagesFrom (return . getModSumOrig) packagePathes
     mapM_ (reloadModule (\_ -> return ())) needToReload -- don't report consequent reloads (not expected)
     liftIO $ resp 
       $ if not (null ignoredMods) 
@@ -176,12 +175,7 @@ updateClient resp (PerformRefactoring refact modPath selection args) = do
       Right diff -> do changedMods <- catMaybes <$> applyChanges diff
                        liftIO $ resp $ ModulesChanged (map snd changedMods)
                        -- when a new module is added, we need to compile it with the correct package db
-                       (case catMaybes $ map (\case ModuleCreated n _ _ -> Just n; _ -> Nothing) diff of
-                          m:_ -> \a -> do mcs <- gets (^. refSessMCs)
-                                          let Just mc = lookupModuleColl m mcs
-                                          usePackageDB (mc ^. mcPkgDBs) a
-                          [] -> id) $ 
-                         void $ reloadChanges (map ((^. sfkModuleName) . fst) changedMods)
+                       void $ reloadChanges (map ((^. sfkModuleName) . fst) changedMods)
     return True
   where applyChanges changes = do 
           forM changes $ \case 
@@ -218,13 +212,15 @@ updateClient resp (PerformRefactoring refact modPath selection args) = do
 initGhcSession :: IO Session
 initGhcSession = Session <$> (newIORef =<< runGhc (Just libdir) (initGhcFlags >> getSession))
 
-usePackageDB :: GhcMonad m => [FilePath] -> m a -> m a
-usePackageDB [] = id
+usePackageDB :: GhcMonad m => [FilePath] -> m ()
+usePackageDB [] = return ()
 usePackageDB pkgDbLocs
-  = withAlteredDynFlags (liftIO . fmap fst . initPackages 
-                           . (\d -> d { extraPkgConfs = (map PkgConfFile pkgDbLocs ++) . extraPkgConfs d
-                                      , pkgDatabase = Nothing 
-                                      }))
+  = do dfs <- getSessionDynFlags
+       dfs' <- liftIO $ fmap fst $ initPackages 
+                 $ dfs { extraPkgConfs = (map PkgConfFile pkgDbLocs ++) . extraPkgConfs dfs
+                       , pkgDatabase = Nothing 
+                       }
+       void $ setSessionDynFlags dfs'
 
 data ClientMessage
   = KeepAlive

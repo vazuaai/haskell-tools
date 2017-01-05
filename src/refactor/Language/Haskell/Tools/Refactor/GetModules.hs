@@ -41,14 +41,13 @@ data ModuleCollection
                      , _mcModules :: Map.Map SourceFileKey ModuleRecord
                      , _mcFlagSetup :: DynFlags -> IO DynFlags -- ^ Sets up the ghc environment for compiling the modules of this collection
                      , _mcDependencies :: [ModuleCollectionId]
-                     , _mcPkgDBs :: [FilePath]
                      }
 
 instance Eq ModuleCollection where
   (==) = (==) `on` _mcId
 
 instance Show ModuleCollection where
-  show (ModuleCollection id root srcDirs mods _ deps _) 
+  show (ModuleCollection id root srcDirs mods _ deps) 
     = "ModuleCollection (" ++ show id ++ ") " ++ root ++ " " ++ show srcDirs ++ " (" ++ show mods ++ ") " ++ show deps
 
 data ModuleRecord 
@@ -149,7 +148,7 @@ getModules root
        case find (\p -> takeExtension p == ".cabal") files of
           Just cabalFile -> modulesFromCabalFile root cabalFile
           Nothing        -> do mods <- modulesFromDirectory root root
-                               return [ModuleCollection (DirectoryMC root) root [root] (Map.fromList $ map ((, ModuleNotLoaded False) . SourceFileKey NormalHs) mods) return [] []]
+                               return [ModuleCollection (DirectoryMC root) root [root] (Map.fromList $ map ((, ModuleNotLoaded False) . SourceFileKey NormalHs) mods) return []]
 
 modulesFromDirectory :: FilePath -> FilePath -> IO [String]
 -- now recognizing only .hs files
@@ -183,7 +182,6 @@ modulesFromCabalFile root cabal = getModules . flattenPackageDescription <$> rea
                                                           (Map.fromList $ map ((, ModuleNotLoaded False) . SourceFileKey NormalHs . moduleName) (getModuleNames tmc)) 
                                                           (flagsFromBuildInfo bi)
                                                           (map (\(Dependency pkgName _) -> LibraryMC (unPackageName pkgName)) (targetBuildDepends bi)) 
-                                                          []
 
         moduleName = concat . intersperse "." . components
 
