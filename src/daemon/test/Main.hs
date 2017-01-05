@@ -6,7 +6,8 @@ import Test.Tasty.HUnit
 import System.Exit
 import System.Directory
 import System.FilePath
-import System.Random
+import System.Process
+import System.Environment
 import Control.Monad
 import Control.Exception
 import Control.Concurrent
@@ -18,7 +19,6 @@ import qualified Data.List as List
 import Data.Aeson
 import Data.Maybe
 import System.IO
-import System.Directory
 
 import Debug.Trace
 
@@ -26,7 +26,8 @@ import Language.Haskell.Tools.Refactor.Daemon
 import Language.Haskell.Tools.Refactor.Daemon.PackageDB
 
 main :: IO ()
-main = do tr <- canonicalizePath testRoot
+main = do unsetEnv "GHC_PACKAGE_PATH"
+          tr <- canonicalizePath testRoot
           defaultMain (allTests tr)
 
 allTests :: FilePath -> TestTree
@@ -35,13 +36,15 @@ allTests testRoot
       $ testGroup "daemon-tests" 
           [ testGroup "simple-tests" 
               $ map (makeDaemonTest . (\(label, input, output) -> (Nothing, label, input, output))) simpleTests
-          , testGroup "loading-tests" 
-              $ map (makeDaemonTest . (\(label, input, output) -> (Nothing, label, input, output))) loadingTests
-          , testGroup "refactor-tests" 
-              $ map (makeDaemonTest . (\(label, dir, input, output) -> (Just (testRoot </> dir), label, input, output))) (refactorTests testRoot)
-          , testGroup "reload-tests" 
-              $ map makeReloadTest reloadingTests
-          , selfLoadingTest
+          -- , testGroup "loading-tests" 
+          --     $ map (makeDaemonTest . (\(label, input, output) -> (Nothing, label, input, output))) loadingTests
+          -- , testGroup "refactor-tests" 
+          --     $ map (makeDaemonTest . (\(label, dir, input, output) -> (Just (testRoot </> dir), label, input, output))) (refactorTests testRoot)
+          -- , testGroup "reload-tests" 
+          --     $ map makeReloadTest reloadingTests
+          , testGroup "pkg-db-tests" 
+              $ map makePkgDbTest pkgDbTests
+          -- , selfLoadingTest
           ]
 
 testSuffix = "_test"
@@ -90,9 +93,9 @@ loadingTests =
       ]
     , [ LoadedModules [testRoot </> "th-added-later" </> "package1" </> "A.hs"] 
       , LoadedModules [testRoot </> "th-added-later" </> "package2" </> "B.hs"]] )
-  , ( "cabal-sandbox"
-    , [AddPackages [testRoot </> "cabal-sandbox"] CabalSandboxDB]
-    , [LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]] )
+  -- , ( "cabal-sandbox"
+  --   , [AddPackages [testRoot </> "cabal-sandbox"] CabalSandboxDB]
+  --   , [LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]] )
   -- need to programmatically create the test environment
   -- , ( "stack"
   --   , [AddPackages [testRoot </> "stack"] StackDB]
@@ -168,14 +171,6 @@ reloadingTests =
       , LoadedModules [ testRoot </> "reloading" ++ testSuffix </> "A.hs" ]
       ]
     )
-  -- need to programmatically create the test environment
-  -- , ( "pkg-db-reload", testRoot </> "cabal-sandbox"
-  --   , [ AddPackages [testRoot </> "cabal-sandbox" ++ testSuffix] AutoDB ]
-  --   , return ()
-  --   , [ ReLoad [testRoot </> "cabal-sandbox" ++ testSuffix </> "UseGroups.hs"] []]
-  --   , [ LoadedModules [testRoot </> "cabal-sandbox" ++ testSuffix </> "UseGroups.hs"]
-  --     , LoadedModules [testRoot </> "cabal-sandbox" ++ testSuffix </> "UseGroups.hs"]
-  --     ] )
   , ( "reloading-package", testRoot </> "changing-cabal"
     , [ AddPackages [ testRoot </> "changing-cabal" ++ testSuffix ] DefaultDB]
     , appendFile (testRoot </> "changing-cabal" ++ testSuffix </> "some-test-package.cabal") ", B" 
@@ -222,6 +217,21 @@ reloadingTests =
     )
   ]
 
+pkgDbTests :: [(String, IO (), [ClientMessage], [ResponseMsg])]
+pkgDbTests 
+  = [ ( "pkg-db-reload"
+      , void $ withCurrentDirectory (testRoot </> "cabal-sandbox")
+             $ do readProcess "cabal" ["sandbox", "init"] ""
+                  withCurrentDirectory ("groups-0.4.0.0") $ do
+                    readProcess "cabal" ["sandbox", "init", "--sandbox", ".." </> ".cabal-sandbox"] ""
+                    readProcess "cabal" ["install"] ""
+      , [ AddPackages [testRoot </> "cabal-sandbox"] CabalSandboxDB
+        , ReLoad [testRoot </> "cabal-sandbox" </> "UseGroups.hs"] []]
+      , [ LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]
+        , LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]
+        ])
+    ] 
+
 makeDaemonTest :: (Maybe FilePath, String, [ClientMessage], [ResponseMsg]) -> TestTree
 makeDaemonTest (Nothing, label, input, expected) = testCase label $ do  
     actual <- communicateWithDaemon (map Right input)
@@ -245,11 +255,15 @@ makeReloadTest (label, dir, input1, io, input2, expected) = testCase label $ do
     assertEqual "" expected actual
   `finally` removeDirectoryRecursive (dir ++ testSuffix)
 
+makePkgDbTest :: (String, IO (), [ClientMessage], [ResponseMsg]) -> TestTree
+makePkgDbTest (label, prepare, inputs, expected) = testCase label $ do  
+    actual <- communicateWithDaemon ([Left prepare] ++ map Right inputs)
+    assertEqual "" expected actual
+
 communicateWithDaemon :: [Either (IO ()) ClientMessage] -> IO [ResponseMsg]
 communicateWithDaemon msgs = withSocketsDo $ do
-    port <- genPort
-    forkIO $ runDaemon [show port, "True"]
-    addrInfo <- getAddrInfo Nothing (Just "127.0.0.1") (Just (show port))
+    forkIO $ runDaemon ["4123", "True"]
+    addrInfo <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4123")
     let serverAddr = head addrInfo
     sock <- socket (addrFamily serverAddr) Stream defaultProtocol
     waitToConnect sock (addrAddress serverAddr)
@@ -263,9 +277,7 @@ communicateWithDaemon msgs = withSocketsDo $ do
     sendAll sock $ encode Stop
     close sock
     return (concat intermedRes ++ resps)
-  where genPort :: IO Int
-        genPort = randomRIO (4100, 4200)
-        waitToConnect sock addr 
+  where waitToConnect sock addr 
           = connect sock addr `catch` \(e :: SomeException) -> waitToConnect sock addr
 
 
