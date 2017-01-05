@@ -36,15 +36,15 @@ allTests testRoot
       $ testGroup "daemon-tests" 
           [ testGroup "simple-tests" 
               $ map (makeDaemonTest . (\(label, input, output) -> (Nothing, label, input, output))) simpleTests
-          -- , testGroup "loading-tests" 
-          --     $ map (makeDaemonTest . (\(label, input, output) -> (Nothing, label, input, output))) loadingTests
-          -- , testGroup "refactor-tests" 
-          --     $ map (makeDaemonTest . (\(label, dir, input, output) -> (Just (testRoot </> dir), label, input, output))) (refactorTests testRoot)
-          -- , testGroup "reload-tests" 
-          --     $ map makeReloadTest reloadingTests
+          , testGroup "loading-tests" 
+              $ map (makeDaemonTest . (\(label, input, output) -> (Nothing, label, input, output))) loadingTests
+          , testGroup "refactor-tests" 
+              $ map (makeDaemonTest . (\(label, dir, input, output) -> (Just (testRoot </> dir), label, input, output))) (refactorTests testRoot)
+          , testGroup "reload-tests" 
+              $ map makeReloadTest reloadingTests
           , testGroup "pkg-db-tests" 
               $ map makePkgDbTest pkgDbTests
-          -- , selfLoadingTest
+          , selfLoadingTest
           ]
 
 testSuffix = "_test"
@@ -113,7 +113,7 @@ sourceRoot = ".." </> ".." </> "src"
 selfLoadingTest :: TestTree
 selfLoadingTest = localOption (mkTimeout ({- 5 min -} 1000 * 1000 * 60 * 5)) $ testCase "self-load" $ do  
     actual <- communicateWithDaemon 
-                [ Right $ AddPackages (map (sourceRoot </>) ["ast", "backend-ghc", "prettyprint", "rewrite", "refactor", "daemon"]) DefaultDB ]
+                [ Right $ AddPackages (map (sourceRoot </>) ["ast", "backend-ghc", "prettyprint", "rewrite", "refactor", "daemon"]) StackDB ]
     assertBool ("The expected result is a nonempty response message list that does not contain errors. Actual result: " ++ show actual) 
                (not (null actual) && all (\case ErrorMessage {} -> False; _ -> True) actual)
 
@@ -276,6 +276,7 @@ communicateWithDaemon msgs = withSocketsDo $ do
     resps <- readSockResponsesUntil sock Disconnected BS.empty
     sendAll sock $ encode Stop
     close sock
+    threadDelay 10000 -- sleep for 0.1 s
     return (concat intermedRes ++ resps)
   where waitToConnect sock addr 
           = connect sock addr `catch` \(e :: SomeException) -> waitToConnect sock addr
