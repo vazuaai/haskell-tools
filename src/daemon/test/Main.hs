@@ -1,4 +1,4 @@
-{-# LANGUAGE StandaloneDeriving, LambdaCase #-}
+{-# LANGUAGE StandaloneDeriving, LambdaCase, ScopedTypeVariables #-}
 module Main where
 
 import Test.Tasty
@@ -6,6 +6,7 @@ import Test.Tasty.HUnit
 import System.Exit
 import System.Directory
 import System.FilePath
+import System.Random
 import Control.Monad
 import Control.Exception
 import Control.Concurrent
@@ -22,14 +23,11 @@ import System.Directory
 import Debug.Trace
 
 import Language.Haskell.Tools.Refactor.Daemon
+import Language.Haskell.Tools.Refactor.Daemon.PackageDB
 
 main :: IO ()
-main = do -- create one daemon process for the whole testing session
-          -- with separate processes it is not a problem
-          forkIO $ runDaemon ["4123", "True"]
-          tr <- canonicalizePath testRoot
+main = do tr <- canonicalizePath testRoot
           defaultMain (allTests tr)
-          stopDaemon
 
 allTests :: FilePath -> TestTree
 allTests testRoot
@@ -57,41 +55,53 @@ simpleTests =
 loadingTests :: [(String, [ClientMessage], [ResponseMsg])]
 loadingTests =
   [ ( "load-package"
-    , [AddPackages [testRoot </> "has-cabal"]]
+    , [AddPackages [testRoot </> "has-cabal"] DefaultDB]
     , [LoadedModules [testRoot </> "has-cabal" </> "A.hs"]] )
   , ( "no-cabal"
-    , [AddPackages [testRoot </> "no-cabal"]]
+    , [AddPackages [testRoot </> "no-cabal"] DefaultDB]
     , [LoadedModules [testRoot </> "no-cabal" </> "A.hs"]] )
   , ( "source-dir"
-    , [AddPackages [testRoot </> "source-dir"]]
+    , [AddPackages [testRoot </> "source-dir"] DefaultDB]
     , [LoadedModules [testRoot </> "source-dir" </> "src" </> "A.hs"]] )
   , ( "source-dir-outside"
-    , [AddPackages [testRoot </> "source-dir-outside"]]
+    , [AddPackages [testRoot </> "source-dir-outside"] DefaultDB]
     , [LoadedModules [testRoot </> "source-dir-outside" </> ".." </> "src" </> "A.hs"]] )
   , ( "multi-packages"
     , [ AddPackages [ testRoot </> "multi-packages" </> "package1"
-                    , testRoot </> "multi-packages" </> "package2" ]]
+                    , testRoot </> "multi-packages" </> "package2" ] DefaultDB]
     , [ LoadedModules [ testRoot </> "multi-packages" </> "package2" </> "B.hs"
                       , testRoot </> "multi-packages" </> "package1" </> "A.hs"]] )
   , ( "multi-packages-flags"
     , [ AddPackages [ testRoot </> "multi-packages-flags" </> "package1"
-                    , testRoot </> "multi-packages-flags" </> "package2" ]]
+                    , testRoot </> "multi-packages-flags" </> "package2" ] DefaultDB]
     , [ LoadedModules [ testRoot </> "multi-packages-flags" </> "package2" </> "B.hs"
                       , testRoot </> "multi-packages-flags" </> "package1" </> "A.hs"]] )
   , ( "multi-packages-dependent"
     , [ AddPackages [ testRoot </> "multi-packages-dependent" </> "package1"
-                    , testRoot </> "multi-packages-dependent" </> "package2" ]]
+                    , testRoot </> "multi-packages-dependent" </> "package2" ] DefaultDB]
     , [ LoadedModules [ testRoot </> "multi-packages-dependent" </> "package1" </> "A.hs"
                       , testRoot </> "multi-packages-dependent" </> "package2" </> "B.hs"]] )
   , ( "has-th"
-    , [AddPackages [testRoot </> "has-th"]]
+    , [AddPackages [testRoot </> "has-th"] DefaultDB]
     , [LoadedModules [testRoot </> "has-th" </> "TH.hs", testRoot </> "has-th" </> "A.hs"]] )
   , ( "th-added-later"
-    , [ AddPackages [testRoot </> "th-added-later" </> "package1"]
-      , AddPackages [testRoot </> "th-added-later" </> "package2"] 
+    , [ AddPackages [testRoot </> "th-added-later" </> "package1"] DefaultDB
+      , AddPackages [testRoot </> "th-added-later" </> "package2"] DefaultDB
       ]
     , [ LoadedModules [testRoot </> "th-added-later" </> "package1" </> "A.hs"] 
       , LoadedModules [testRoot </> "th-added-later" </> "package2" </> "B.hs"]] )
+  , ( "cabal-sandbox"
+    , [AddPackages [testRoot </> "cabal-sandbox"] CabalSandboxDB]
+    , [LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]] )
+  , ( "stack"
+    , [AddPackages [testRoot </> "stack"] StackDB]
+    , [LoadedModules [testRoot </> "stack" </> "A.hs"]] )
+  , ( "cabal-sandbox"
+    , [AddPackages [testRoot </> "cabal-sandbox"] AutoDB]
+    , [LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]] )
+  , ( "stack"
+    , [AddPackages [testRoot </> "stack"] AutoDB]
+    , [LoadedModules [testRoot </> "stack" </> "A.hs"]] )
   ]
 
 sourceRoot = ".." </> ".." </> "src"
@@ -99,7 +109,7 @@ sourceRoot = ".." </> ".." </> "src"
 selfLoadingTest :: TestTree
 selfLoadingTest = localOption (mkTimeout ({- 5 min -} 1000 * 1000 * 60 * 5)) $ testCase "self-load" $ do  
     actual <- communicateWithDaemon 
-                [ Right $ AddPackages (map (sourceRoot </>) ["ast", "backend-ghc", "prettyprint", "rewrite", "refactor", "daemon"] ) ]
+                [ Right $ AddPackages (map (sourceRoot </>) ["ast", "backend-ghc", "prettyprint", "rewrite", "refactor", "daemon"]) DefaultDB ]
     assertBool ("The expected result is a nonempty response message list that does not contain errors. Actual result: " ++ show actual) 
                (not (null actual) && all (\case ErrorMessage {} -> False; _ -> True) actual)
 
@@ -107,7 +117,7 @@ selfLoadingTest = localOption (mkTimeout ({- 5 min -} 1000 * 1000 * 60 * 5)) $ t
 refactorTests :: FilePath -> [(String, FilePath, [ClientMessage], [ResponseMsg])]
 refactorTests testRoot =
   [ ( "simple-refactor", "simple-refactor"
-    , [ AddPackages [ testRoot </> "simple-refactor" ++ testSuffix ]
+    , [ AddPackages [ testRoot </> "simple-refactor" ++ testSuffix ] DefaultDB
       , PerformRefactoring "RenameDefinition" (testRoot </> "simple-refactor" ++ testSuffix </> "A.hs") "3:1-3:2" ["y"]
       ]
     , [ LoadedModules [ testRoot </> "simple-refactor" ++ testSuffix </> "A.hs" ]
@@ -115,7 +125,7 @@ refactorTests testRoot =
       , LoadedModules [ testRoot </> "simple-refactor" ++ testSuffix </> "A.hs" ]
       ] )
   , ( "hs-boots", "hs-boots"
-    , [ AddPackages [ testRoot </> "hs-boots" ++ testSuffix ]
+    , [ AddPackages [ testRoot </> "hs-boots" ++ testSuffix ] DefaultDB
       , PerformRefactoring "RenameDefinition" (testRoot </> "hs-boots" ++ testSuffix </> "A.hs") "5:1-5:2" ["aa"]
       ]
     , [ LoadedModules [ testRoot </> "hs-boots" ++ testSuffix </> "B.hs-boot", testRoot </> "hs-boots" ++ testSuffix </> "A.hs-boot"
@@ -128,7 +138,7 @@ refactorTests testRoot =
       , LoadedModules [ testRoot </> "hs-boots" ++ testSuffix </> "B.hs" ]
       ] )
   , ( "remove-module", "simple-refactor"
-    , [ AddPackages [ testRoot </> "simple-refactor" ++ testSuffix ]
+    , [ AddPackages [ testRoot </> "simple-refactor" ++ testSuffix ] DefaultDB
       , PerformRefactoring "RenameDefinition" (testRoot </> "simple-refactor" ++ testSuffix </> "A.hs") "1:8-1:9" ["AA"]
       ]
     , [ LoadedModules [ testRoot </> "simple-refactor" ++ testSuffix </> "A.hs" ]
@@ -139,7 +149,7 @@ refactorTests testRoot =
 
 reloadingTests :: [(String, FilePath, [ClientMessage], IO (), [ClientMessage], [ResponseMsg])]
 reloadingTests =
-  [ ( "reloading-module", testRoot </> "reloading", [ AddPackages [ testRoot </> "reloading" ++ testSuffix ] ]
+  [ ( "reloading-module", testRoot </> "reloading", [ AddPackages [ testRoot </> "reloading" ++ testSuffix ] DefaultDB]
     , writeFile (testRoot </> "reloading" ++ testSuffix </> "C.hs") "module C where\nc = ()" 
     , [ ReLoad [testRoot </> "reloading" ++ testSuffix </> "C.hs"] []
       , PerformRefactoring "RenameDefinition" (testRoot </> "reloading" ++ testSuffix </> "C.hs") "2:1-2:2" ["d"] 
@@ -158,9 +168,9 @@ reloadingTests =
       ]
     )
   , ( "reloading-package", testRoot </> "changing-cabal"
-    , [ AddPackages [ testRoot </> "changing-cabal" ++ testSuffix ] ]
+    , [ AddPackages [ testRoot </> "changing-cabal" ++ testSuffix ] DefaultDB]
     , appendFile (testRoot </> "changing-cabal" ++ testSuffix </> "some-test-package.cabal") ", B" 
-    , [ AddPackages [testRoot </> "changing-cabal" ++ testSuffix]
+    , [ AddPackages [testRoot </> "changing-cabal" ++ testSuffix] DefaultDB
       , PerformRefactoring "RenameDefinition" (testRoot </> "changing-cabal" ++ testSuffix </> "A.hs") "3:1-3:2" ["z"] 
       ]
     , [ LoadedModules [ testRoot </> "changing-cabal" ++ testSuffix </> "A.hs" ]
@@ -172,7 +182,7 @@ reloadingTests =
       , LoadedModules [ testRoot </> "changing-cabal" ++ testSuffix </> "B.hs" ]
       ]
     )
-  , ( "reloading-remove", testRoot </> "reloading", [ AddPackages [ testRoot </> "reloading" ++ testSuffix ] ]
+  , ( "reloading-remove", testRoot </> "reloading", [ AddPackages [ testRoot </> "reloading" ++ testSuffix ] DefaultDB]
     , do removeFile (testRoot </> "reloading" ++ testSuffix </> "A.hs")
          removeFile (testRoot </> "reloading" ++ testSuffix </> "B.hs")
     , [ ReLoad [testRoot </> "reloading" ++ testSuffix </> "C.hs"] 
@@ -189,7 +199,7 @@ reloadingTests =
     )
   , ( "remove-package", testRoot </> "multi-packages-dependent"
     , [ AddPackages [ testRoot </> "multi-packages-dependent" ++ testSuffix </> "package1"
-                    , testRoot </> "multi-packages-dependent" ++ testSuffix </> "package2" ]]
+                    , testRoot </> "multi-packages-dependent" ++ testSuffix </> "package2" ] DefaultDB]
     , removeDirectoryRecursive (testRoot </> "multi-packages-dependent" ++ testSuffix </> "package2")
     , [ RemovePackages [testRoot </> "multi-packages-dependent" ++ testSuffix </> "package2"] 
       , PerformRefactoring "RenameDefinition" (testRoot </> "multi-packages-dependent" ++ testSuffix </> "package1" </> "A.hs") 
@@ -228,19 +238,27 @@ makeReloadTest (label, dir, input1, io, input2, expected) = testCase label $ do
 
 communicateWithDaemon :: [Either (IO ()) ClientMessage] -> IO [ResponseMsg]
 communicateWithDaemon msgs = withSocketsDo $ do
-  addrInfo <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4123")
-  let serverAddr = head addrInfo
-  sock <- socket (addrFamily serverAddr) Stream defaultProtocol
-  connect sock (addrAddress serverAddr)
-  intermedRes <- sequence (map (either (\io -> do sendAll sock (encode KeepAlive)
-                                                  r <- readSockResponsesUntil sock KeepAliveResponse BS.empty
-                                                  io
-                                                  return r)
-                               ((>> return []) . sendAll sock . (`BS.snoc` '\n') . encode)) msgs)
-  sendAll sock $ encode Disconnect
-  resps <- readSockResponsesUntil sock Disconnected BS.empty
-  close sock
-  return (concat intermedRes ++ resps)
+    port <- genPort
+    forkIO $ runDaemon [show port, "True"]
+    addrInfo <- getAddrInfo Nothing (Just "127.0.0.1") (Just (show port))
+    let serverAddr = head addrInfo
+    sock <- socket (addrFamily serverAddr) Stream defaultProtocol
+    waitToConnect sock (addrAddress serverAddr)
+    intermedRes <- sequence (map (either (\io -> do sendAll sock (encode KeepAlive)
+                                                    r <- readSockResponsesUntil sock KeepAliveResponse BS.empty
+                                                    io
+                                                    return r)
+                                 ((>> return []) . sendAll sock . (`BS.snoc` '\n') . encode)) msgs)
+    sendAll sock $ encode Disconnect
+    resps <- readSockResponsesUntil sock Disconnected BS.empty
+    sendAll sock $ encode Stop
+    close sock
+    return (concat intermedRes ++ resps)
+  where genPort :: IO Int
+        genPort = randomRIO (4100, 4200)
+        waitToConnect sock addr 
+          = connect sock addr `catch` \(e :: SomeException) -> waitToConnect sock addr
+
 
 readSockResponsesUntil :: Socket -> ResponseMsg -> BS.ByteString -> IO [ResponseMsg]
 readSockResponsesUntil sock rsp bs
@@ -255,21 +273,12 @@ readSockResponsesUntil sock rsp bs
                  then return $ List.delete rsp recognized 
                  else readSockResponsesUntil sock rsp fullBS
 
-stopDaemon :: IO ()
-stopDaemon = withSocketsDo $ do
-  addrInfo <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4123")
-  let serverAddr = head addrInfo
-  sock <- socket (addrFamily serverAddr) Stream defaultProtocol
-  connect sock (addrAddress serverAddr)
-
-  sendAll sock $ encode Stop
-  close sock
-
 testRoot = ".." </> ".." </> "examples" </> "Project"
 
 deriving instance Eq ResponseMsg
 instance FromJSON ResponseMsg
 instance ToJSON ClientMessage
+instance ToJSON PackageDB
 
 copyDir ::  FilePath -> FilePath -> IO ()
 copyDir src dst = do
