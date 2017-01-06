@@ -8,6 +8,7 @@ import System.Directory
 import System.FilePath
 import System.Process
 import System.Environment
+import System.Exit
 import Control.Monad
 import Control.Exception
 import Control.Concurrent
@@ -225,16 +226,26 @@ pkgDbTests :: [(String, IO (), [ClientMessage], [ResponseMsg])]
 pkgDbTests 
   = [ ( "pkg-db-reload"
       , void $ withCurrentDirectory (testRoot </> "cabal-sandbox")
-             $ do readProcess "cabal" ["sandbox", "init"] ""
+             $ do execute "cabal" ["sandbox", "init"]
                   withCurrentDirectory ("groups-0.4.0.0") $ do
-                    readProcess "cabal" ["sandbox", "init", "--sandbox", ".." </> ".cabal-sandbox"] ""
-                    readProcess "cabal" ["install"] ""
+                    execute "cabal" ["sandbox", "init", "--sandbox", ".." </> ".cabal-sandbox"]
+                    execute "cabal" ["install"]
       , [ AddPackages [testRoot </> "cabal-sandbox"] CabalSandboxDB
         , ReLoad [testRoot </> "cabal-sandbox" </> "UseGroups.hs"] []]
       , [ LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]
         , LoadedModules [testRoot </> "cabal-sandbox" </> "UseGroups.hs"]
         ])
     ] 
+
+execute :: String -> [String] -> IO ()
+execute cmd args 
+  = do let command = (cmd ++ concat (map (" " ++) args))
+       (_, Just stdOut, Just stdErr, handle) <- createProcess ((shell command) { std_out = CreatePipe, std_err = CreatePipe })
+       exitCode <- waitForProcess handle
+       when (exitCode /= ExitSuccess) $ do 
+         output <- hGetContents stdOut
+         errors <- hGetContents stdErr
+         error ("Command exited with nonzero: " ++ command ++ " output:\n" ++ output ++ "\nerrors:\n" ++ errors)
 
 makeDaemonTest :: MVar Int -> (Maybe FilePath, String, [ClientMessage], [ResponseMsg]) -> TestTree
 makeDaemonTest port (Nothing, label, input, expected) = testCase label $ do  
@@ -286,8 +297,7 @@ communicateWithDaemon port msgs = withSocketsDo $ do
         retryConnect port = do portNum <- readMVar port 
                                forkIO $ runDaemon [show portNum, "True"]
                                return portNum
-          `catch` \(e :: SomeException) -> do putStrLn $ show e
-                                              modifyMVar_ port (\i -> if i < pORT_NUM_END 
+          `catch` \(e :: SomeException) -> do modifyMVar_ port (\i -> if i < pORT_NUM_END 
                                                                         then return (i+1) 
                                                                         else error "The port number reached the maximum")
                                               retryConnect port
