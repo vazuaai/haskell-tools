@@ -25,26 +25,30 @@ import Debug.Trace
 import Language.Haskell.Tools.Refactor.Daemon
 import Language.Haskell.Tools.Refactor.Daemon.PackageDB
 
+pORT_NUM_START = 4100
+pORT_NUM_END = 4200
+
 main :: IO ()
 main = do unsetEnv "GHC_PACKAGE_PATH"
+          portCounter <- newMVar pORT_NUM_START 
           tr <- canonicalizePath testRoot
-          defaultMain (allTests tr)
+          defaultMain (allTests tr portCounter)
 
-allTests :: FilePath -> TestTree
-allTests testRoot
+allTests :: FilePath -> MVar Int -> TestTree
+allTests testRoot portCounter
   = localOption (mkTimeout ({- 10s -} 1000 * 1000 * 10)) 
       $ testGroup "daemon-tests" 
           [ testGroup "simple-tests" 
-              $ map (makeDaemonTest . (\(label, input, output) -> (Nothing, label, input, output))) simpleTests
+              $ map (makeDaemonTest portCounter . (\(label, input, output) -> (Nothing, label, input, output))) simpleTests
           , testGroup "loading-tests" 
-              $ map (makeDaemonTest . (\(label, input, output) -> (Nothing, label, input, output))) loadingTests
+              $ map (makeDaemonTest portCounter . (\(label, input, output) -> (Nothing, label, input, output))) loadingTests
           , testGroup "refactor-tests" 
-              $ map (makeDaemonTest . (\(label, dir, input, output) -> (Just (testRoot </> dir), label, input, output))) (refactorTests testRoot)
+              $ map (makeDaemonTest portCounter . (\(label, dir, input, output) -> (Just (testRoot </> dir), label, input, output))) (refactorTests testRoot)
           , testGroup "reload-tests" 
-              $ map makeReloadTest reloadingTests
+              $ map (makeReloadTest portCounter) reloadingTests
           , testGroup "pkg-db-tests" 
-              $ map makePkgDbTest pkgDbTests
-          , selfLoadingTest
+              $ map (makePkgDbTest portCounter) pkgDbTests
+          , selfLoadingTest portCounter
           ]
 
 testSuffix = "_test"
@@ -110,9 +114,9 @@ loadingTests =
 
 sourceRoot = ".." </> ".." </> "src"
 
-selfLoadingTest :: TestTree
-selfLoadingTest = localOption (mkTimeout ({- 5 min -} 1000 * 1000 * 60 * 5)) $ testCase "self-load" $ do  
-    actual <- communicateWithDaemon 
+selfLoadingTest :: MVar Int -> TestTree
+selfLoadingTest port = localOption (mkTimeout ({- 5 min -} 1000 * 1000 * 60 * 5)) $ testCase "self-load" $ do  
+    actual <- communicateWithDaemon port
                 [ Right $ AddPackages (map (sourceRoot </>) ["ast", "backend-ghc", "prettyprint", "rewrite", "refactor", "daemon"]) StackDB ]
     assertBool ("The expected result is a nonempty response message list that does not contain errors. Actual result: " ++ show actual) 
                (not (null actual) && all (\case ErrorMessage {} -> False; _ -> True) actual)
@@ -232,38 +236,38 @@ pkgDbTests
         ])
     ] 
 
-makeDaemonTest :: (Maybe FilePath, String, [ClientMessage], [ResponseMsg]) -> TestTree
-makeDaemonTest (Nothing, label, input, expected) = testCase label $ do  
-    actual <- communicateWithDaemon (map Right input)
+makeDaemonTest :: MVar Int -> (Maybe FilePath, String, [ClientMessage], [ResponseMsg]) -> TestTree
+makeDaemonTest port (Nothing, label, input, expected) = testCase label $ do  
+    actual <- communicateWithDaemon port (map Right input)
     assertEqual "" expected actual
-makeDaemonTest (Just dir, label, input, expected) = testCase label $ do 
+makeDaemonTest port (Just dir, label, input, expected) = testCase label $ do 
     exists <- doesDirectoryExist (dir ++ testSuffix)
     -- clear the target directory from possible earlier test runs
     when exists $ removeDirectoryRecursive (dir ++ testSuffix)
     copyDir dir (dir ++ testSuffix)
-    actual <- communicateWithDaemon (map Right input)
+    actual <- communicateWithDaemon port (map Right input)
     assertEqual "" expected actual
   `finally` removeDirectoryRecursive (dir ++ testSuffix)
 
-makeReloadTest :: (String, FilePath, [ClientMessage], IO (), [ClientMessage], [ResponseMsg]) -> TestTree
-makeReloadTest (label, dir, input1, io, input2, expected) = testCase label $ do  
+makeReloadTest :: MVar Int -> (String, FilePath, [ClientMessage], IO (), [ClientMessage], [ResponseMsg]) -> TestTree
+makeReloadTest port (label, dir, input1, io, input2, expected) = testCase label $ do  
     exists <- doesDirectoryExist (dir ++ testSuffix)
     -- clear the target directory from possible earlier test runs
     when exists $ removeDirectoryRecursive (dir ++ testSuffix)
     copyDir dir (dir ++ testSuffix)
-    actual <- communicateWithDaemon (map Right input1 ++ [Left io] ++ map Right input2)
+    actual <- communicateWithDaemon port (map Right input1 ++ [Left io] ++ map Right input2)
     assertEqual "" expected actual
   `finally` removeDirectoryRecursive (dir ++ testSuffix)
 
-makePkgDbTest :: (String, IO (), [ClientMessage], [ResponseMsg]) -> TestTree
-makePkgDbTest (label, prepare, inputs, expected) = testCase label $ do  
-    actual <- communicateWithDaemon ([Left prepare] ++ map Right inputs)
+makePkgDbTest :: MVar Int -> (String, IO (), [ClientMessage], [ResponseMsg]) -> TestTree
+makePkgDbTest port (label, prepare, inputs, expected) = testCase label $ do  
+    actual <- communicateWithDaemon port ([Left prepare] ++ map Right inputs)
     assertEqual "" expected actual
 
-communicateWithDaemon :: [Either (IO ()) ClientMessage] -> IO [ResponseMsg]
-communicateWithDaemon msgs = withSocketsDo $ do
-    forkIO $ runDaemon ["4123", "True"]
-    addrInfo <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4123")
+communicateWithDaemon :: MVar Int -> [Either (IO ()) ClientMessage] -> IO [ResponseMsg]
+communicateWithDaemon port msgs = withSocketsDo $ do
+    portNum <- retryConnect port
+    addrInfo <- getAddrInfo Nothing (Just "127.0.0.1") (Just (show portNum))
     let serverAddr = head addrInfo
     sock <- socket (addrFamily serverAddr) Stream defaultProtocol
     waitToConnect sock (addrAddress serverAddr)
@@ -276,10 +280,17 @@ communicateWithDaemon msgs = withSocketsDo $ do
     resps <- readSockResponsesUntil sock Disconnected BS.empty
     sendAll sock $ encode Stop
     close sock
-    threadDelay 10000 -- sleep for 0.1 s
     return (concat intermedRes ++ resps)
   where waitToConnect sock addr 
           = connect sock addr `catch` \(e :: SomeException) -> waitToConnect sock addr
+        retryConnect port = do portNum <- readMVar port 
+                               forkIO $ runDaemon [show portNum, "True"]
+                               return portNum
+          `catch` \(e :: SomeException) -> do putStrLn $ show e
+                                              modifyMVar_ port (\i -> if i < pORT_NUM_END 
+                                                                        then return (i+1) 
+                                                                        else error "The port number reached the maximum")
+                                              retryConnect port
 
 
 readSockResponsesUntil :: Socket -> ResponseMsg -> BS.ByteString -> IO [ResponseMsg]
