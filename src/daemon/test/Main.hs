@@ -229,7 +229,7 @@ pkgDbTests
              $ do execute "cabal" ["sandbox", "init"]
                   execute "echo" ["PATH"]
                   execute "echo" ["$PATH"]
-                  execute "where" ["cabal"]
+                  execute "which" ["cabal"]
                   withCurrentDirectory ("groups-0.4.0.0") $ do
                     execute "cabal" ["sandbox", "init", "--sandbox", ".." </> ".cabal-sandbox"]
                     execute "cabal" ["install"]

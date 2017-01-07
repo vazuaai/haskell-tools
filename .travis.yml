@@ -52,7 +52,7 @@ install:
 script:
 
   - echo $PATH
-  - where cabal
+  - which cabal
   
   # Build Haskell-tools with all library, executable, test and benchmark
   - stack --no-terminal build --test --no-run-tests --coverage --haddock --no-haddock-deps 
