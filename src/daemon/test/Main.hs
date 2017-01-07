@@ -272,6 +272,8 @@ makeReloadTest port (label, dir, input1, io, input2, expected) = testCase label 
 
 makePkgDbTest :: MVar Int -> (String, IO (), [ClientMessage], [ResponseMsg]) -> TestTree
 makePkgDbTest port (label, prepare, inputs, expected) = testCase label $ do  
+    path <- getEnv "PATH"
+    putStrLn ("PATH: " ++ path)
     actual <- communicateWithDaemon port ([Left prepare] ++ map Right inputs)
     assertEqual "" expected actual
 
