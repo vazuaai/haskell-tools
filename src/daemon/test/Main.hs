@@ -226,10 +226,10 @@ pkgDbTests :: [(String, IO (), [ClientMessage], [ResponseMsg])]
 pkgDbTests 
   = [ ( "pkg-db-reload"
       , void $ withCurrentDirectory (testRoot </> "cabal-sandbox")
-             $ do execute "cabal" ["sandbox", "init"]
-                  execute "echo" ["PATH"]
+             $ do execute "echo" ["PATH"]
                   execute "echo" ["$PATH"]
                   execute "which" ["cabal"]
+                  execute "cabal" ["sandbox", "init"]
                   withCurrentDirectory ("groups-0.4.0.0") $ do
                     execute "cabal" ["sandbox", "init", "--sandbox", ".." </> ".cabal-sandbox"]
                     execute "cabal" ["install"]
